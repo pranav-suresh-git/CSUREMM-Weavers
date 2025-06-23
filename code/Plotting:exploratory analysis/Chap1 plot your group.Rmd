@@ -1,0 +1,152 @@
+---
+title: "Chap1 Plot your group"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Plot association and kinship network together
+#GROUPS within plot
+```{r}
+Dnet.pssa <- readRDS("../output/data/network/plot/gmm/net_D_plot_gmm_SS_all_SRI_v1.list.Rdata")
+#Nnet.pssa <- readRDS("../output/data/network/plot/net_N_plot_BNB_SS_all_SRI_v0.list.RData")
+net <- Dnet.pssa$net_16S #Dnet or Nnet
+
+#assign the year you want to plot!
+el <- as.data.frame(as_edgelist(net)) %>% 
+  mutate(kinship = fun_kinship(., kinship, "kinorder2")) %>% 
+  mutate(pair = fun_weight(., pair[year=="2016",.(V1, V2, pair)], "pair")) %>% #assign $year
+  mutate(kinship = replace(kinship, pair==1, "pair")) %>% 
+  mutate(sex = fun_sexdyad(., nestbird_attr)[[3]])
+
+#add edge attributes
+net <- set.edge.attribute(net, "kinship", value = el$kinship)
+```
+
+#GROUPS within colony (cluster analysis)
+```{r}
+#get vertex names you need for the
+group_bycolony <- read_xlsx("../output/analysis_groups_plot/data/output_unit type within colonies.xlsx")
+
+#Ngroup_bycolony <- read_xlsx("../output/analysis_groups_plot/data/output_N_unit type within #colonies.xlsx")
+
+#Choose colony you would like to plot
+#scolony <- c("SPRA01", "SPRA02","SPRA09", "SPRA34", "SPRA46",  "SPRA35", "SPRA49")
+scolony <- c("SPRA46", "SPRA49", "SPRA41")
+
+#change the year
+gid <- group_bycolony %>% #group_bycolony or Ngroup_bycolony
+  #filter(year == "2015" & plot == "SPRA") %>% #if you want to plot the whole plot
+  filter(year == "2016" & colony %in% scolony) %>% #use this if you want to plot colonies
+  pull(groupid) %>% print()
+
+#id for selected colony members
+vid <- mygroup_ssa %>% filter(groupid %in% gid & colony %in% scolony &id!="WRMOY") %>% pull(id) %>% print()
+
+#retrieve only vertex in the selected colony
+net2 <-induced_subgraph(net, vids=which(V(net)$name %in% vid))
+
+#prepare community list for the net
+com.list <- mygroup_ssa %>% 
+  filter(groupid %in% gid & colony %in% scolony & id!="WRMOY") %>% 
+  select(year, plot, groupid, id) %>% 
+  group_by(year, plot, groupid) %>% nest() %>% pull(data, name = groupid)
+
+community <- lapply(com.list, function(x)unlist(x, use.names = F))
+```
+
+#plot function
+```{r}
+#function for plotting
+fun_plotcom3 <- function(net, community, size, ewidth=0, vname = c("y", "n"), vnsize = 0.7, layout = "layout_nicely"){
+  if(!exists("mytriangle", mode="function")) source("fun_add_triangle.R")  #add triangle shape
+  net <- igraph::delete.edges(net, which(E(net)$weight < ewidth))
+  
+  E(net)$color <- c("PO"="deeppink", "FS"="#009E73", 
+                    "first"="hotpink", "second" ="lightskyblue", "DR"="white", "UR"="white", "pair" = "grey30")[E(net)$kinship]
+  #"PO"="#EC7AA3", "FS"="#009E73", "first"="#EFC8DD",
+  
+  V(net)$sex <- nestbird_attr[match(V(net)$name, node)]$sex 
+  V(net)$colony <- nestbird_attr[match(V(net)$name, node)]$colony
+  V(net)$plot <- nestbird_attr[match(V(net)$name, node)]$plot
+  V(net)$color <- c("m"="dodgerblue", "f"="yellow", "NA" = "brown")[V(net)$sex] 
+  V(net)$shape <- c("m"="square", "f"="circle", "NA" = "triangle")[V(net)$sex]
+  
+  V(net)$community <- community
+  
+  library(RColorBrewer)
+  
+  
+  colrs <- colorRampPalette(brewer.pal(n = 9, "Paired"), alpha=TRUE)(length(community))
+  #colrs <- brewer.pal(n = length(communities(fg)), name = "Set3")
+  #colrs <- c("#FB8072", "#FCCDE5", "#80B1D3")
+  
+  set.seed(123)
+  layout = layout_nicely(net)  #convenieint
+  #layout = layout_with_dh  #good in some
+  
+  
+  if(vname == "y"){
+    g <-
+      plot(net, 
+           layout = layout,
+           vertex.color = V(net)$color,
+           vertex.shape = V(net)$shape,
+           vertex.size = size,
+           #vertex.size = igraph::degree(net)*size, 
+           vertex.label = V(net)$name, edge.curved = 0, 
+           vertex.label.cex = vnsize, vertex.label.dist = 1,
+           edge.width = sqrt(E(net)$weight)*4, edge.color = E(net)$color, 
+           mark.groups = V(net)$community,   # mark groups
+           mark.col = colrs, mark.border=colrs)
+    return(g)
+  }
+  if(vname == "n"){
+    g <-
+      plot(net, 
+           layout = layout,
+           vertex.color = V(net)$color,
+           vertex.shape = V(net)$shape,
+           vertex.size = size,
+           #vertex.size = igraph::degree(net)*size, 
+           vertex.label = "", edge.curved = 0, 
+           vertex.label.dist = 1,
+           edge.width = sqrt(E(net)$weight)*4, edge.color = E(net)$color, 
+           mark.groups = V(net)$community,   # mark groups
+           mark.col = colrs, mark.border=NA)
+    return(g)
+  }
+}
+```
+
+```{r}
+fun_plotcom3(net2, community, 8, .01, "y", vnsize = 0.6)
+
+name = "16S46.49.41"
+
+ggsave(paste0("../output/chap1 plot your group/", name, "_daytime with kinship.png"), fun_plotcom3(net2, community, 8, .01, "n", vnsize = 0.6), width = 6, height = 6)
+
+```
+
+#relocate your plot (not successful)
+```{r}
+library(editData)
+
+set.seed(123)
+l <- layout_nicely(net2)
+#add nodename
+
+l2 <- as.data.frame.matrix(l) %>% 
+  mutate(node = V(net2)$name) %>% 
+  left_join(mygroup[gtype=="daytime"&year=="2013"&plot=="SPRA", .(gtype, year, plot, id, groupid)], by = c("node"="id")) %>% 
+  arrange(groupid)
+
+l2 <- edit(l2)  #adjust positions
+
+l2 <- l2[,1:2] %>% as.matrix()
+
+fun_plotcom3(net2, community, 5, .01, "y", vnsize = 0.6, layout = l2)
+```
+

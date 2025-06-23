@@ -1,0 +1,726 @@
+---
+title: "Chap1 r and social levels"
+output: html_document
+---
+
+##[comment]Provide a summary of your data (means, variation, etc.) on association (e.g., pairs, families, extended families, colonies), number and size of groups, and social network metrics, before delving into models that test why you see these patterns. 
+
+```{r}
+aso_ssa_mf <- aso_ssa %>% 
+  filter(V12sex == "mf") %>% 
+  mutate(vm = ifelse(V1sex=="m", id1, id2), #rearrange V1 male and V2 female
+         vf = ifelse(V2sex=="f", id2, id1)) %>% 
+  mutate(id1=vm, id2=vf) %>% 
+  select(-vm, -vf, -V1sex, -V2sex) %>% 
+  rename(aso = association) %>% setDT()
+```
+
+
+#Tidy data
+##PAIR
+```{r}
+paird <- pair_mf %>%  
+  select(year, plot, V1, V2, V12sex, r) %>% 
+  left_join(aso_ssa_mf[gtype=="daytime", .(year, id1, id2, aso)], by=c("year", "V1"="id1", "V2"="id2")) %>% 
+  filter(!is.na(aso)) #ORKM/OYPM bad data
+
+sum_pair_yearplot <-  paird %>% 
+  group_by(year, plot) %>%
+  summarise(rMean = mean(r), asoMean = mean(aso), 
+            rSD = sd(r), asoSD = sd(aso))
+
+sum_pair_year <- paird %>% 
+  group_by(year) %>%
+  summarise(rMean = mean(r), asoMean = mean(aso),
+            rSD = sd(r), asoSD = sd(aso))
+
+#one pair is only calculated once, association is averaged across years
+sum_pair <- paird %>% 
+  group_by(V1, V2) %>% 
+  summarise(r = mean(r), aso = mean(aso))  #summarise by pair
+
+sum_pair_all <- sum_pair %>% ungroup() %>% 
+  summarise(n = nrow(.),
+            rMean = mean(r), asoMean = mean(aso), 
+            rSD = sd(r), asoSD = sd(aso))
+  
+#write_xlsx(sum_pair, "../output/r and social levels/data/output_pair_raso.xlsx")
+#write_xlsx(sum_pair_all, "../output/r and social levels/data/output_pair_raso_all.xlsx")
+```
+
+#social groups
+```{r}
+levels(mygroup_ssa_r$V12sex) <- c("mm","ff","mf")
+
+#by $groupid
+sum_mygroup <- mygroup_ssa_r %>% 
+  filter(V1!="MYPO"&V2!="MYPO") %>% 
+  group_by(year, plot, gtype, groupid) %>% 
+  summarise(r = mean(r), aso = mean(association))
+
+sum_mygroup_year <- sum_mygroup %>% 
+  group_by(year, gtype) %>% 
+  summarise(rMean = mean(r), asoMean = mean(aso),
+            rSD = sd(r), asoSD = sd(aso))
+
+sum_mygroup_yearplot <- sum_mygroup %>% 
+  group_by(year, plot, gtype) %>% 
+  summarise(rMean = mean(r), asoMean = mean(aso),
+            rSD = sd(r), asoSD = sd(aso))
+
+sum_mygroup_gtype <- sum_mygroup %>% 
+  group_by(gtype) %>% 
+  summarise(n = n(),
+            rMean = mean(r), asoMean = mean(aso),
+            rSD = sd(r), asoSD = sd(aso))
+
+#write_xlsx(sum_mygroup, "../output/r and social levels/data/output_mygroup_raso.xlsx")
+#write_xlsx(sum_mygroup_gtype, "../output/r and social levels/data/output_mygroup_raso_bygtype.xlsx")
+```
+
+
+
+#social groups by sex (This is good)
+```{r}
+sum_mygroup_sex <- mygroup_ssa_r %>% 
+  filter(V1!="MYPO"&V2!="MYPO") %>% 
+  group_by(year, plot, gtype, groupid, V12sex) %>% 
+  summarise(r = mean(r), aso = mean(association)) %>% 
+  mutate(V12sex = ordered(V12sex, levels = c("mm", "ff", "mf"))) %>% setDT()
+
+sum_mygroup_sex_all <- sum_mygroup_sex %>%  
+  group_by(gtype, V12sex) %>% 
+  summarise(rMean = mean(r), asoMean = mean(aso), 
+            rSD = sd(r), asoSD=sd(aso))
+
+#write_xlsx(sum_mygroup_sex, "../output/r and social levels/data/output_mygroup_raso_bysex.xlsx")
+#write_xlsx(sum_mygroup_sex_all, "../output/r and social levels/data/output_mygroup_raso_bysex_all.xlsx")
+```
+
+#social groups by sex and non-pair MF
+```{r}
+sum_mygroup_sex_np <- mygroup_ssa_r %>% 
+  filter(V1!="MYPO"&V2!="MYPO"&pair==0) %>% 
+  group_by(gtype, groupid, V12sex) %>% 
+  summarise(r = mean(r), aso = mean(association)) %>% 
+  mutate(V12sex = ordered(V12sex, levels = c("mm", "ff", "mf")))
+
+sum_mygroup_sex_np_all <- sum_mygroup_sex %>%  
+  group_by(gtype, V12sex) %>% 
+  summarise(rMean = mean(r), asoMean = mean(aso), 
+            rSD = sd(r), asoSD=sd(aso))
+
+#write_xlsx(sum_mygroup_sex_np, "../output/r and social levels/data/output_mygroup_raso_bysex_np.xlsx")
+#write_xlsx(sum_mygroup_sex_np_all, "../output/r and social levels/data/output_mygroup_raso_bysex_all_np.xlsx")
+```
+
+#pair aso withint social groups
+```{r}
+sum_mygroup_pair_year <- mygroup_ssa_r %>% 
+  filter(V1!="MYPO"&V2!="MYPO"&pair==1) %>% 
+  group_by(year, plot, gtype) %>% 
+  summarise(rMean = mean(r), asoMean = mean(association), 
+            rSD = sd(r), asoSD=sd(association))
+
+view(sum_mygroup_pair)
+
+sum_mygroup_pair <- mygroup_ssa_r %>% 
+  filter(V1!="MYPO"&V2!="MYPO"&pair==1) %>% 
+  group_by(gtype) %>% 
+  summarise(rMean = mean(r), asoMean = mean(association), 
+            rSD = sd(r), asoSD=sd(association))
+
+view(sum_mygroup_pair)
+
+ #write_xlsx(sum_mygroup_pair_year, "../output/r and social levels/data/output_mygroup_aso_pair_year.xlsx")
+ #write_xlsx(sum_mygroup_pair, "../output/r and social levels/data/output_mygroup_aso_pair.xlsx")
+```
+
+#GROUPS
+#Stats test for r/sex within groups
+#GLMER 
+```{r}
+library(glmmTMB)
+library(emmeans)
+source("overdisp_fun.R")
+
+df <- sum_mygroup_sex %>% 
+  filter(V12sex != "mf") %>% 
+  left_join(mygroup_ssa_gs, by=c("year","plot","gtype","groupid")) %>% 
+  mutate(V12sex = factor(V12sex, levels = c("ff", "mm"))) %>%
+  mutate(gtype = factor(gtype, levels = c("daytime", "sleeping", "breeding")))
+
+#full model, first and second order----
+fit <- glmmTMB(r ~ V12sex*gtype + gs + (1|year) + (1|plot) + (1|groupid), family = gaussian,  data=df)
+
+#diagnostic: ok
+hist(resid(fit))
+
+summary(fit)
+glmmTMB:::Anova.glmmTMB(fit)
+
+emm.fit <- emmeans(fit, pairwise ~ V12sex*gtype, type = "response")
+print(emm.fit)
+plot(emm.fit)
+
+ggsave("../output/r and social levels/fig/fig_emmeans_mmff_r_gtype.png")
+```
+
+
+#Stats test for aso/sex within groups
+#GLMER 
+```{r}
+library(glmmTMB)
+library(emmeans)
+source("overdisp_fun.R")
+
+df1 <- df %>% mutate(aso = replace(aso, aso==1, 0.999)) #modify for zero-inflated beta regression
+
+#full model, first and second order----
+fit.aso <- glmmTMB(aso ~ V12sex*gtype + gs + (1|year) + (1|plot) + (1|groupid), ziformula =~ 1, family=beta_family(link="logit"),  data=df1)
+
+#diagnostic: ok
+resd <- DHARMa::simulateResiduals(fit)  #simulation output
+plot(resd)
+
+summary(fit.aso)
+glmmTMB:::Anova.glmmTMB(fit.aso)
+
+emm.fit.aso <- emmeans(fit.aso, pairwise ~ V12sex*gtype, type = "response")
+print(emm.fit.aso)
+plot(emm.fit.aso)
+
+ggsave("../output/r and social levels/fig/fig_emmeans_mmff_aso_gtype.png")
+```
+
+#GLMER : with oly daytime and nighttime groups
+```{r}
+library(glmmTMB)
+library(emmeans)
+source("overdisp_fun.R")
+
+df.D <- df %>% 
+  mutate(aso = replace(aso, aso==1, 0.999)) %>%
+  filter(gtype == "daytime") #modify for zero-inflated beta regression
+
+#full model, first and second order----
+fit.aso2 <- glmmTMB(aso ~ V12sex + gs + (1|year) + (1|plot) + (1|groupid), ziformula =~ 1, family=beta_family(link="logit"),  data=df.D)
+
+#diagnostic: ok
+resd <- DHARMa::simulateResiduals(fit.aso2)  #simulation output
+plot(resd)
+
+summary(fit.aso2)
+glmmTMB:::Anova.glmmTMB(fit.aso2)
+
+emm.fit.aso <- emmeans(fit.aso2, pairwise ~ V12sex*gtype, type = "response")
+print(emm.fit.aso2)
+plot(emm.fit.aso2)
+
+ggsave("../output/r and social levels/fig/fig_emmeans_mmff_asoD_gtype.png")
+```
+
+```{r}
+df.N <- df %>% 
+  mutate(aso = replace(aso, aso==1, 0.999)) %>%
+  filter(gtype == "sleeping") #modify for zero-inflated beta regression
+
+#full model, first and second order----
+fit.aso3 <- glmmTMB(aso ~ V12sex + gs + (1|year) + (1|plot) + (1|groupid), ziformula =~ 1, family=beta_family(link="logit"),  data=df.N)
+
+#diagnostic: ok
+resd <- DHARMa::simulateResiduals(fit.aso3)  #simulation output
+plot(resd)
+
+summary(fit.aso3)
+glmmTMB:::Anova.glmmTMB(fit.aso3)
+
+emm.fit.aso <- emmeans(fit.aso3, pairwise ~ V12sex*gtype, type = "response")
+print(emm.fit.aso3)
+plot(emm.fit.aso3)
+
+ggsave("../output/r and social levels/fig/fig_emmeans_mmff_asoN_gtype.png")
+```
+
+
+##COLONY
+```{r}
+colony_dyad <- colony_member_main %>%
+  filter(color != "MYPO") %>% #no genetic data
+  select(year, plot, colony, color) %>% 
+  add_count(year, plot, colony) %>% 
+  filter(n>1) %>% 
+  group_by(year, plot, colony) %>% 
+  group_modify(., ~ as.data.frame.matrix(t(combn(.$color, 2)), stringsAsFactors = F)) %>%
+  as.data.table() %>% 
+  mutate(V12sex = fun_sexdyad(.[,.(V1,V2)], sex)[[3]],
+         r = fun_r(.[,.(V1,V2)], relate), 
+         aso = fun_weight(.[,.(V1,V2)], aso_ssa[gtype=="daytime"], "association"),
+         asoN = fun_weight(.[,.(V1,V2)], aso_ssa[gtype=="sleeping"], "association")) %>% 
+  mutate(aso = replace_na(aso, 0)) %>% #aso=NA means they never appeared in the daytime
+  mutate(V12sex = ordered(V12sex, levels=c("mm", "ff", "mf"))) %>% 
+  left_join(select(colony_size, year, colony, n_birds, size), by=c("year", "colony")) %>% 
+  mutate(log_nbirds = log(n_birds)) %>% 
+  setDT()
+
+sum_colony <- colony_dyad %>% 
+  group_by(year, plot, colony) %>% 
+  summarise(r = mean(r), aso = mean(aso), rSD = sd(r))
+
+sum_colony_yearplot <- sum_colony %>%
+  group_by(year, plot) %>% 
+  summarise(rMean = mean(r), asoMean = mean(aso),
+            rSD = sd(r), asoSD = sd(aso))
+
+sum_colony_year <- sum_colony %>% 
+  group_by(year) %>% 
+  summarise(rMean = mean(r), asoMean = mean(aso),
+            rSD = sd(r), asoSD = sd(aso)) 
+
+sum_colony_plot <- sum_colony %>% 
+  group_by(plot) %>% 
+  summarise(rMean = mean(r), asoMean = mean(aso),
+            rSD = sd(r), asoSD = sd(aso)) 
+
+sum_colony_all <- sum_colony %>% 
+  ungroup() %>% 
+  summarise(n = nrow(.),
+            rMean = mean(r), asoMean = mean(aso),
+            rSD = sd(r), asoSD = sd(aso))
+
+#by sex
+sum_colony_sex <- colony_dyad %>%
+  group_by(year, plot, colony, V12sex) %>% 
+  summarise(r = mean(r), aso = mean(aso), asoN = mean(asoN)) %>% setDT()
+
+sum_colony_sex2 <- colony_dyad %>%
+  group_by(year, plot, colony, V12sex) %>% 
+  summarise(rMean = mean(r), asoMean = mean(aso), asoNMean = mean(asoN), rSD = sd(r)) %>% setDT()
+
+sum_colony_sex_all <- sum_colony_sex %>% 
+  group_by(V12sex) %>% 
+  summarise(rMean = mean(r), asoMean = mean(aso),
+            rSD = sd(r), asoSD = sd(aso))
+
+#by colony size
+sum_colony_size <- colony_dyad %>%
+  group_by(year, plot, colony, size, V12sex) %>% 
+  summarise(r = mean(r), aso = mean(aso)) %>% setDT()
+
+sum_colony_size_all <- sum_colony_size %>%
+  group_by(size, V12sex) %>% 
+  summarise(rMean = mean(r), rSD = sd(r), aso = mean(aso)) %>% setDT()
+
+#write_xlsx(sum_colony_all, "../output/r and social levels/data/output_colony_raso_all.xlsx")
+#write_xlsx(sum_colony_sex_all, "../output/r and social levels/data/output_colony_raso_all_bysex.xlsx")
+  
+```
+
+#Tidy table for output
+```{r}
+#colony
+sum_colony_sex_w <- sum_colony_sex %>% 
+  pivot_wider(., names_from = )
+```
+
+
+#Stats test for r/sex within colony
+#GLMER 
+```{r}
+library(glmmTMB)
+library(emmeans)
+source("overdisp_fun.R")
+
+dfc <- sum_colony_sex %>% 
+  filter(V12sex != "mf") %>% 
+  left_join(colony_size, by=c("year","plot","colony")) %>% 
+  mutate(yearcolony = paste0(year, colony)) %>% 
+  mutate(V12sex = factor(V12sex, levels = c("ff", "mm"))) %>% 
+  mutate(size2 = factor(size, levels = c("S", "M", "L", "XL")))
+```
+
+#relatedness ~ sex, within colonies
+```{r}
+#full model, first and second order----
+fitc <- glmmTMB(r ~ V12sex + scale(n_birds) + (1|year) + (1|plot) + (1|colony), family = "gaussian",  data=dfc)
+
+#diagnostic: ok
+hist(resid(fitc))
+
+summary(fitc)
+glmmTMB:::Anova.glmmTMB(fitc)
+
+emm.fitc <- emmeans(fitc, pairwise ~ V12sex*size2, type = "response")
+print(emm.fitc)
+plot(emm.fitc)
+
+ggsave("../output/r and social levels/fig/fig_emmeans_mmff_r_colony.png")
+```
+
+#Stats test for DAYTIME aso/sex within colonies
+#GLMER 
+```{r}
+library(glmmTMB)
+library(emmeans)
+source("overdisp_fun.R")
+
+#full model, first and second order----
+fitc.aso <- glmmTMB(aso ~ V12sex + scale(n_birds) + (1|year) + (1|plot) + (1|colony), ziformula =~ 1, family=beta_family(link="logit"),  data=dfc)
+
+#diagnostic: ok
+resd <- DHARMa::simulateResiduals(fitc.aso)  #simulation output
+plot(resd)
+
+summary(fitc.aso)
+glmmTMB:::Anova.glmmTMB(fitc.aso)
+
+emm.fitc.aso <- emmeans(fitc.aso, pairwise ~ V12sex*size2, type = "response")
+print(emm.fitc.aso)
+plot(emm.fitc.aso)
+
+ggsave("../output/r and social levels/fig/fig_emmeans_mmff_aso_colony.png")
+```
+
+#aso~sex, colony, NIGHTTIME
+```{r}
+dfc.N <- dfc %>% mutate(asoN = replace(aso, aso==1, 0.999))
+
+fitc.aso2 <- glmmTMB(asoN ~ V12sex*scale(n_birds) + (1|year) + (1|plot) + (1|colony), ziformula =~ 1, family=beta_family(link="logit"),  data=dfc.N)
+
+summary(fitc.aso2)
+glmmTMB:::Anova.glmmTMB(fitc.aso2)
+```
+
+#-------r, sex and colony size---------
+```{r}
+#tidy data for modeling
+#[sum_r_colony_allbirds]----
+sum_r_colony_allbirds <- colony_dyad %>% 
+  group_by(year, plot, colony) %>% 
+  summarise(mean = mean(r)) %>% 
+  left_join(select(colony_size, year, colony, n_birds), by=c("year", "colony")) %>% 
+  mutate(log_nbirds = log(n_birds)) %>% 
+  setDT()
+
+#[sum_r_colony_bysex]----
+sum_r_colony_bysex <- colony_dyad %>% 
+  group_by(year, plot, colony, size, V12sex) %>% 
+  summarise(mean = mean(r)) %>% 
+  left_join(select(colony_size, year, colony, n_birds), by=c("year", "colony")) %>% 
+  mutate(log_nbirds = log(n_birds)) %>% 
+  setDT()
+
+#[sum_r_colony_bysexsize]----
+sum_r_colony_bysexsize <- colony_dyad %>% 
+  left_join(select(colony_size, year, colony, n_birds), by=c("year", "colony")) %>% 
+  group_by(size, V12sex) %>% 
+  summarise(mean = mean(r), sd = sd(r)) %>% 
+  setDT()
+```
+
+#plot r and colony size (results for DR)
+```{r}
+ggscatter(colony_dyad, x = "log_nbirds", y = "r", facet.by = c("V12sex"),
+          size = 1, 
+          add = "reg.line", conf.int = T, 
+          add.params = list(color = "red",
+                            fill = "lightgray"), 
+          xlab="Number of birds (log)")
+
+# log_nbirds
+ggscatter(sum_r_colony_bysex, x = "log_nbirds", y = "mean", facet.by = c("V12sex"),
+          size = 1, 
+          add = "reg.line", conf.int = T, 
+          add.params = list(color = "red",
+                            fill = "lightgray"), 
+          xlab="Number of birds in the colony (Ln)", 
+          ylab="Mean relatedness")
+
+#ggsave("../output/r and social levels/fig/fig_colony size and r.png", width=5, height=2.5)
+
+#
+ggscatter(sum_r_colony_allbirds, x = "log_nbirds", y = "mean",
+          size = 1, 
+          add = "reg.line", conf.int = T, 
+          add.params = list(color = "red",
+                            fill = "lightgray"), 
+          xlab="Number of birds in the colony (Ln)", 
+          ylab="Mean relatedness") 
+
+#ggsave("../output/r and social levels/fig/fig_colony size and r_all birds.png", width=7, height=4)
+```
+
+
+#stats on r and colony size
+```{r}
+#tidy data
+sum_r_colony$V12sex <- factor(sum_r_colony$V12sex)
+sum_r_colony$year <- factor(sum_r_colony$year)
+
+#ALL birds
+fit0 <- lmer(mean ~ log_nbirds + (1|plot), data = sum_r_colony_allbirds)
+
+summary(fit0)
+
+#-----------average by sex------------------#
+#colony size as continuous , interaction sig.
+fit <- lmer(mean ~ log_nbirds*V12sex + year + (1|plot), data = sum_r_colony)
+
+anova(fit)
+summary(fit)
+
+#------now separate sex--------#
+#by sex, mm
+fit <- lmer(mean ~ log_nbirds + year + (1|plot), data = sum_r_colony[V12sex=="mm"])
+
+anova(fit)
+summary(fit)
+hist(resid(fit)) #so good
+
+#by sex, mf
+fit <- lmer(mean ~ log_nbirds + year + (1|plot), data = sum_r_colony[V12sex=="mf"])
+
+anova(fit)
+summary(fit)
+hist(resid(fit)) #so good
+
+#by sex, ff
+fit <- lmer(mean ~ log_nbirds + year + (1|plot), data = sum_r_colony[V12sex=="ff"])
+
+anova(fit)
+summary(fit)
+hist(resid(fit)) #so good
+
+#-------without year--------#
+#by sex, ff; singular problem
+fit <- lmer(mean ~ log_nbirds + (1|plot), data = sum_r_colony[V12sex=="ff"])
+
+```
+
+##SITE (all birds appeared on site are included)
+```{r}
+site_dyad <- data %>% 
+  filter(color != "MYPO") %>% #no genetic data
+  select(year, plot, color) %>%
+  distinct() %>% 
+  left_join(select(age, color, year, age), by=c("year", "color")) %>% 
+  filter(age!="IM") %>% 
+  group_by(year, plot) %>% 
+  group_modify(., ~ as.data.frame.matrix(t(combn(.$color, 2)), stringsAsFactors = F)) %>%
+  as.data.table() %>% 
+  mutate(V12sex = fun_sexdyad(.[,.(V1,V2)], sex)[[3]],
+         r = fun_r(.[,.(V1,V2)], relate), 
+         aso = fun_weight(.[,.(V1,V2)], aso_ssa[gtype=="daytime"], "association")) %>% 
+  mutate(aso = replace_na(aso, 0)) %>% #aso=NA means they never appeared in the daytime
+  mutate(V12sex = ordered(V12sex, levels=c("mm", "ff", "mf"))) %>% 
+  left_join(select(pair, year, V1, V2, pair), by = c("year", "V1", "V2")) %>% 
+  left_join(select(colony_member_main1, year, plot, colony, color), by=c("year", "plot", "V1"="color")) %>% 
+  left_join(select(colony_member_main1, year, plot, colony, color), by=c("year", "plot", "V2"="color"), suffix = c("1", "2")) %>% 
+  mutate(samecolony = ifelse(colony1==colony2, 1, 0)) %>% 
+  left_join(mygroup_ssa[gtype=="daytime", .(id, year, plot, groupid)], by=c("year", "plot", "V1"="id")) %>% 
+  left_join(mygroup_ssa[gtype=="daytime", .(id, year, plot, groupid)], by=c("year", "plot", "V2"="id"), suffix=c("1", "2")) %>%  
+  mutate(samegroup = ifelse(groupid1==groupid2, 1, 0)) %>% 
+  setDT()
+
+#saveRDS(site_dyad, "../output/r and social levels/data/output_site_dyad_raso.rdata")
+```
+
+#summary for site level
+```{r}
+##samecolony
+sum_site_yearplot <- site_dyad %>% 
+  group_by(year, plot) %>% 
+  summarise(r = mean(r), aso = mean(aso))
+
+sum_site_plot <- sum_site_yearplot %>% 
+  group_by(plot) %>% 
+  summarise(r = mean(r), aso = mean(aso))
+
+sum_site_all <- site_dyad %>% 
+  group_by(samecolony) %>% 
+  summarise(n = nrow(.),
+            rMean = mean(r), asoMean = mean(aso),
+            rSD = sd(r), asoSD = sd(aso))
+
+#samegroup
+sum_site_gr <- site_dyad %>%
+  filter(!is.na(samegroup)) %>% 
+  group_by(samecolony, samegroup) %>% 
+  summarise(r = mean(r), aso = mean(aso))
+
+#by sex
+sum_site_sex <- site_dyad %>%
+  group_by(plot, V12sex) %>% 
+  summarise(rMean = mean(r), asoMean = mean(aso), 
+            rSD = sd(r), asoSD = sd(aso))
+
+sum_site_sex_yearplot <- site_dyad %>%
+  group_by(plot, year, V12sex) %>% 
+  summarise(rMean = mean(r), asoMean = mean(aso), 
+            rSD = sd(r), asoSD = sd(aso))
+
+sum_site_sex_plot <- sum_site_sex_yearplot %>%
+  group_by(plot, V12sex) %>% 
+  summarise(rmean = mean(rMean), asomean = mean(asoMean), 
+            rsd = sd(rSD), asosd = sd(asoSD))
+
+#write_xlsx(sum_site_sex, "../output/r and social levels/data/output_site_r_sex.xlsx")
+```
+
+#r and sex by plot; MCMCglmm-multimembership
+```{r}
+library(MCMCglmm)
+library(car)
+library(coda)
+library(beepr)
+
+source("vif_MCMCglmm.R") #vif.MCMCglmm
+```
+
+```{r}
+#[df]----
+#only mm, ff
+df <- site_dyad %>% 
+  filter(V12sex != "mf") %>% 
+  select(V1, V2, year, plot, r, V12sex) %>% setDT()
+
+#summarise sample size
+data.frame(color = c(df$V1, df$V2)) %>% distinct() %>% mutate(sex = fun_sex(.$color, sex)) %>% group_by(sex) %>% summarise(n = n())
+data.frame(color = c(df[plot=="MSTO"]$V1, df[plot=="MSTO"]$V2)) %>% distinct() %>% mutate(sex = fun_sex(.$color, sex)) %>% group_by(sex) %>% summarise(n = n())
+data.frame(color = c(df[plot=="SPRA"]$V1, df[plot=="SPRA"]$V2)) %>% distinct() %>% mutate(sex = fun_sex(.$color, sex)) %>% group_by(sex) %>% summarise(n = n())
+data.frame(color = c(df[plot=="LLOD"]$V1, df[plot=="LLOD"]$V2)) %>% distinct() %>% mutate(sex = fun_sex(.$color, sex)) %>% group_by(sex) %>% summarise(n = n())
+
+```
+
+#multi-membership MCMCglmm
+```{r}
+df <- df %>% 
+  mutate(V1 = as.factor(V1), V2 = as.factor(V2), V12sex=factor(V12sex, levels = c("ff", "mm"))) %>% 
+  setDT()
+
+#prepare for multi-membership 
+df$V1 <- as.factor(c(levels(df$V2),as.character(df$V1)))[-(1:length(levels(df$V2)))] 
+df$V2 <- as.factor(c(levels(df$V1),as.character(df$V2)))[-(1:length(levels(df$V1)))]
+
+priors1<- list(R = list(V = 1, nu = 0.002), G = list(G1 = list(V =1, nu = 0.002))) #uninformative prior
+
+mcmcfit <- MCMCglmm(r ~ V12sex*plot, random = ~ mm(V1 + V2), family = "gaussian", data = df, verbose = FALSE, prior=priors1, nitt = 65000, thin = 50, burnin = 15000)
+
+#check graph
+plot(mcmcfit$VCV)
+autocorr(mcmcfit$VCV)
+
+summary(mcmcfit)$solutions
+posterior.mode(mcmcfit$VCV) #randome effect; sig. meaning dyadID are imporant, prob. due to kinship
+HPDinterval(mcmcfit$VCV)
+
+saveRDS(mcmcfit, "../output/r and social levels/data/mcmcfit.rdata")
+```
+
+#test MM and FF r for only inds r >= 0.25
+```{r}
+df25 <- site_dyad %>% 
+  filter(V12sex != "mf" & r>=0.25) %>% 
+  select(V1, V2, year, plot, r, V12sex) %>% 
+  mutate(V1=as.factor(V1), V2=as.factor(V2), V12sex=factor(V12sex, levels = c("mm", "ff")))
+
+#prepare for multi-membership 
+df25$V1 <- as.factor(c(levels(df25$V2),as.character(df25$V1)))[-(1:length(levels(df25$V2)))] 
+df25$V2 <- as.factor(c(levels(df25$V1),as.character(df25$V2)))[-(1:length(levels(df25$V1)))]
+
+```
+
+#test MM and FF r for only inds r >= 0.25
+```{r}
+priors1<- list(R = list(V = 1, nu = 0.002), G = list(G1 = list(V =1, nu = 0.002))) #uninformative prior
+
+mcmcfit2 <- MCMCglmm(r ~ V12sex*plot, random = ~ idv(mult.memb(~ V1 + V2)), family = "gaussian", data = df25, verbose = FALSE, prior=priors1)
+
+#check graph
+plot(mcmcfit2$VCV)
+plot(mcmcfit2$Sol)
+
+autocorr.diag(mcmcfit2$VCV)
+autocorr.diag(mcmcfit2$Sol)
+
+summary(mcmcfit2)$solutions
+
+saveRDS(mcmcfit2, "../output/r and social levels/data/mcmcfit.rdata")
+```
+
+#multi-membership MCMCglmm
+#r within groups
+```{r}
+dfg <- mygroup_ssa_r %>% 
+  mutate(dyadID = paste0(V1, V2)) %>% 
+  filter(V12sex != "mf" & V1 != "MYPO" & V2 != "MYPO") %>% 
+  mutate(V12sex = factor(V12sex, levels = c("ff", "mm"))) %>%
+  mutate(gtype = factor(gtype, levels = c("daytime", "sleeping", "breeding"))) %>% 
+  mutate(V1 = as.factor(V1), V2 = as.factor(V2), V12sex=factor(V12sex, levels = c("ff", "mm"))) %>% 
+  setDT()
+```
+
+```{r}
+#prepare for multi-membership 
+dfg$V1 <- as.factor(c(levels(dfg$V2),as.character(dfg$V1)))[-(1:length(levels(dfg$V2)))] 
+dfg$V2 <- as.factor(c(levels(dfg$V1),as.character(dfg$V2)))[-(1:length(levels(dfg$V1)))]
+
+priors1<- list(R = list(V = 1, nu = 0.002), G = list(G1 = list(V =1, nu = 0.002), G1 = list(V =1, nu = 0.002))) #uninformative prior
+
+mcmcfit.g <- MCMCglmm(r ~ V12sex*gtype + gs, random = ~ mm(V1 + V2) + groupid, family = "gaussian", data = dfg, verbose = FALSE, prior = priors1) #nitt = 65000, thin = 50, burnin = 15000
+
+#not much diff. between gtype
+
+#check graph
+plot(mcmcfit.g$VCV)
+autocorr(mcmcfit.g$VCV)
+
+summary(mcmcfit.g)
+
+saveRDS(mcmcfit.g, "../output/r and social levels/data/mcmcfit.g.rdata")
+```
+
+#r ~ sex, MCMCglmm, Daytime
+#Results are no different from using group data and GLMM, even more sig!!
+```{r}
+dfg.D <- dfg %>% filter(gtype == "daytime")
+
+#prepare for multi-membership 
+dfg.D$V1 <- as.factor(c(levels(dfg.D$V2),as.character(dfg.D$V1)))[-(1:length(levels(dfg.D$V2)))] 
+dfg.D$V2 <- as.factor(c(levels(dfg.D$V1),as.character(dfg.D$V2)))[-(1:length(levels(dfg.D$V1)))]
+
+priors1<- list(R = list(V = 1, nu = 0.002), G = list(G1 = list(V =1, nu = 0.002), G1 = list(V =1, nu = 0.002))) #uninformative prior
+
+mcmcfit.gD <- MCMCglmm(r ~ V12sex + gs, random = ~ mm(V1 + V2) + groupid, family = "gaussian", data = dfg.D, verbose = FALSE, prior = priors1) #nitt = 65000, thin = 50, burnin = 15000
+
+#check graph
+plot(mcmcfit.gD$VCV)
+plot(mcmcfit.gD$Sol)
+autocorr(mcmcfit.gD$VCV)
+
+summary(mcmcfit.gD)
+
+saveRDS(mcmcfit.gD, "../output/r and social levels/data/mcmcfit.gD.rdata")
+```
+
+#r ~ sex, MCMCglmm, Nighttime
+```{r}
+dfg.N <- dfg %>% filter(gtype == "sleeping")
+
+#prepare for multi-membership 
+dfg.N$V1 <- as.factor(c(levels(dfg.N$V2),as.character(dfg.N$V1)))[-(1:length(levels(dfg.N$V2)))] 
+dfg.N$V2 <- as.factor(c(levels(dfg.N$V1),as.character(dfg.N$V2)))[-(1:length(levels(dfg.N$V1)))]
+
+priors1<- list(R = list(V = 1, nu = 0.002), G = list(G1 = list(V =1, nu = 0.002), G2 = list(V =1, nu = 0.002), G3 = list(V =1, nu = 0.002), G4 = list(V =1, nu = 0.002), G5 = list(V =1, nu = 0.002))) #uninformative prior
+
+mcmcfit.gN <- MCMCglmm(r ~ V12sex + gs, random = ~ mm(V1 + V2) + dyadID + groupid + year + plot, family = "gaussian", data = dfg.N, verbose = FALSE, prior = priors1) #nitt = 65000, thin = 50, burnin = 15000
+
+#check graph
+plot(mcmcfit.gN$VCV)
+plot(mcmcfit.gN$Sol)
+autocorr(mcmcfit.gN$VCV)
+
+summary(mcmcfit.gD)
+
+saveRDS(mcmcfit.gD, "../output/r and social levels/data/mcmcfit.gD.rdata")
+```

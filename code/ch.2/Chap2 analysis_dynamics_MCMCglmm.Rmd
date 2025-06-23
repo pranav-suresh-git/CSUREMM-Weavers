@@ -1,0 +1,1337 @@
+---
+title: "Chap2 analysis_dynamics_MCMCglmm"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Tidy data
+##Dissolving colonies
+```{r}
+#COLONIES that ALL birds MOVED, WITHIN AND ACROSS, pair included
+#[d.allm]----
+d.allm <- read_xlsx("../output/analysis_dynamics/data/output_colony_dissolved and new colony_within and across dyads.xlsx") %>% 
+  mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+#Combine levels for id1 and id2 for the multi-membership component of the model:
+d.allm$id1 <- as.factor(c(levels(d.allm$id2),as.character(d.allm$id1)))[-(1:length(levels(d.allm$id2)))] 
+d.allm$id2 <- as.factor(c(levels(d.allm$id1),as.character(d.allm$id2)))[-(1:length(levels(d.allm$id1)))]
+
+saveRDS(d.allm, "../output/analysis_dynamics_MCMCglmm/data/d.allm.rdata")
+
+#COLONIES that ALL birds MOVED, WITHING colonies, pair included
+#[d.allm.wi]----
+d.allm.wi <- read_xlsx("../output/analysis_dynamics/data/output_colony_dissolved and new colony_within dyads.xlsx") %>% 
+  mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+#Combine levels for id1 and id2 for the multi-membership component of the model:
+d.allm.wi$id1 <- as.factor(c(levels(d.allm.wi$id2),as.character(d.allm.wi$id1)))[-(1:length(levels(d.allm.wi$id2)))] 
+d.allm.wi$id2 <- as.factor(c(levels(d.allm.wi$id1),as.character(d.allm.wi$id2)))[-(1:length(levels(d.allm.wi$id1)))]
+
+saveRDS(d.allm.wi, "../output/analysis_dynamics_MCMCglmm/data/d.allm.wi.rdata")
+
+#[d.allm.wi.S]----
+#SPRA
+d.allm.wi.S <- d.allm.wi %>% filter(plot == "SPRA") %>% 
+  mutate(dist_dt_z = scale(dist_dt), 
+         r_z = scale(r), 
+         aso_D_t0_z = scale(aso_D_t0), 
+         aso_N_t0_z = scale(aso_N_t0), 
+         aso_colony_t0_z = scale(aso_colony_t0)) 
+
+#Combine levels for id1 and id2 for the multi-membership component of the model:
+d.allm.wi.S$id1 <- as.factor(c(levels(d.allm.wi.S$id2),as.character(d.allm.wi.S$id1)))[-(1:length(levels(d.allm.wi.S$id2)))] 
+d.allm.wi.S$id2 <- as.factor(c(levels(d.allm.wi.S$id1),as.character(d.allm.wi.S$id2)))[-(1:length(levels(d.allm.wi.S$id1)))]
+
+#[d.all.mis]----
+#moving colonies, WITHIN AND ACROSS, <60%missingness
+d.allm.mis <- read_xlsx("../output/analysis_dynamics/data/output_colony_dissolved and new colony_within and across dyads_60missingness.xlsx") %>% mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+#Combine levels for id1 and id2 for the multi-membership component of the model:
+d.allm.mis$id1 <- as.factor(c(levels(d.allm.mis$id2),as.character(d.allm.mis$id1)))[-(1:length(levels(d.allm.mis$id2)))] 
+d.allm.mis$id2 <- as.factor(c(levels(d.allm.mis$id1),as.character(d.allm.mis$id2)))[-(1:length(levels(d.allm.mis$id1)))]
+
+saveRDS(d.allm.mis, "../output/analysis_dynamics_MCMCglmm/data/d.allm.mis.rdata")
+
+#colony <50% missingness
+#very few colonies
+d.allm.mis50 <- read_xlsx("../output/analysis_dynamics/data/output_colony_dissolved and new colony_within and across dyads_colony50missingness.xlsx") %>% 
+  mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+d.allm.mis50$id1 <- as.factor(c(levels(d.allm.mis50$id2),as.character(d.allm.mis50$id1)))[-(1:length(levels(d.allm.mis50$id2)))] 
+d.allm.mis50$id2 <- as.factor(c(levels(d.allm.mis50$id1),as.character(d.allm.mis50$id2)))[-(1:length(levels(d.allm.mis50$id1)))]
+
+#[d.am.DD]----
+#dry-dry year
+d.am.DD <- d.a %>% filter(LSraintype=="drydry") %>% 
+  mutate(dist_dt_z = scale(dist_dt), 
+         r_z = scale(r), 
+         aso_D_t0_z = scale(aso_D_t0), 
+         aso_N_t0_z = scale(aso_N_t0), 
+         aso_colony_t0_z = scale(aso_colony_t0)) %>% 
+  mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+d.am.DD$id1 <- as.factor(c(levels(d.am.DD$id2),as.character(d.am.DD$id1)))[-(1:length(levels(d.am.DD$id2)))] 
+d.am.DD$id2 <- as.factor(c(levels(d.am.DD$id1),as.character(d.am.DD$id2)))[-(1:length(levels(d.am.DD$id1)))]
+
+#[d.am.WW]----
+#wet-wet year
+d.am.WW <- d.a %>% filter(LSraintype=="wetwet") %>% 
+  mutate(dist_dt_z = scale(dist_dt), 
+         r_z = scale(r), 
+         aso_D_t0_z = scale(aso_D_t0), 
+         aso_N_t0_z = scale(aso_N_t0), 
+         aso_colony_t0_z = scale(aso_colony_t0)) %>% 
+  mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+d.am.WW$id1 <- as.factor(c(levels(d.am.WW$id2),as.character(d.am.WW$id1)))[-(1:length(levels(d.am.WW$id2)))] 
+d.am.WW$id2 <- as.factor(c(levels(d.am.WW$id1),as.character(d.am.WW$id2)))[-(1:length(levels(d.am.WW$id1)))]
+
+#[d.am.WD]----
+#wet-dry year
+d.am.WD <- d.a %>% filter(LSraintype=="wetdry") %>% 
+  mutate(dist_dt_z = scale(dist_dt), 
+         r_z = scale(r), 
+         aso_D_t0_z = scale(aso_D_t0), 
+         aso_N_t0_z = scale(aso_N_t0), 
+         aso_colony_t0_z = scale(aso_colony_t0)) %>% 
+  mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+d.am.WD$id1 <- as.factor(c(levels(d.am.WD$id2),as.character(d.am.WD$id1)))[-(1:length(levels(d.am.WD$id2)))] 
+d.am.WD$id2 <- as.factor(c(levels(d.am.WD$id1),as.character(d.am.WD$id2)))[-(1:length(levels(d.am.WD$id1)))]
+
+
+#-----------------
+#ALL adults dyads----
+#[d.a]
+d.a <- read_xlsx("../output/analysis_dynamics/data/output_colony_move&stay_alldyad_new.xlsx") %>% 
+  mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+d.a$id1 <- as.factor(c(levels(d.a$id2),as.character(d.a$id1)))[-(1:length(levels(d.a$id2)))] 
+d.a$id2 <- as.factor(c(levels(d.a$id1),as.character(d.a$id2)))[-(1:length(levels(d.a$id1)))]
+
+#[d.a.mis]----
+#<60%missingness
+d.a.mis <- read_xlsx("../output/analysis_dynamics/data/output_colony_move&stay_alldyad_new_60missing.xlsx")%>% 
+  mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+d.a.mis$id1 <- as.factor(c(levels(d.a.mis$id2),as.character(d.a.mis$id1)))[-(1:length(levels(d.a.mis$id2)))] 
+d.a.mis$id2 <- as.factor(c(levels(d.a.mis$id1),as.character(d.a.mis$id2)))[-(1:length(levels(d.a.mis$id1)))]
+
+#[d.a.DD]----
+#dry-dry year
+d.a.DD <- d.a %>% filter(LSraintype=="drydry") %>% 
+  mutate(dist_dt_z = scale(dist_dt), 
+         r_z = scale(r), 
+         aso_D_t0_z = scale(aso_D_t0), 
+         aso_N_t0_z = scale(aso_N_t0), 
+         aso_colony_t0_z = scale(aso_colony_t0)) %>% 
+  mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+d.a.DD$id1 <- as.factor(c(levels(d.a.DD$id2),as.character(d.a.DD$id1)))[-(1:length(levels(d.a.DD$id2)))] 
+d.a.DD$id2 <- as.factor(c(levels(d.a.DD$id1),as.character(d.a.DD$id2)))[-(1:length(levels(d.a.DD$id1)))]
+
+#[d.a.WW]----
+#wet-wet year
+d.a.WW <- d.a %>% filter(LSraintype=="wetwet") %>% 
+  mutate(dist_dt_z = scale(dist_dt), 
+         r_z = scale(r), 
+         aso_D_t0_z = scale(aso_D_t0), 
+         aso_N_t0_z = scale(aso_N_t0), 
+         aso_colony_t0_z = scale(aso_colony_t0)) %>% 
+  mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+d.a.WW$id1 <- as.factor(c(levels(d.a.WW$id2),as.character(d.a.WW$id1)))[-(1:length(levels(d.a.WW$id2)))] 
+d.a.WW$id2 <- as.factor(c(levels(d.a.WW$id1),as.character(d.a.WW$id2)))[-(1:length(levels(d.a.WW$id1)))]
+
+#[d.a.WD]----
+#wet-dry year
+d.a.WD <- d.a %>% filter(LSraintype=="wetdry") %>% 
+  mutate(dist_dt_z = scale(dist_dt), 
+         r_z = scale(r), 
+         aso_D_t0_z = scale(aso_D_t0), 
+         aso_N_t0_z = scale(aso_N_t0), 
+         aso_colony_t0_z = scale(aso_colony_t0)) %>% 
+  mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+d.a.WD$id1 <- as.factor(c(levels(d.a.WD$id2),as.character(d.a.WD$id1)))[-(1:length(levels(d.a.WD$id2)))] 
+d.a.WD$id2 <- as.factor(c(levels(d.a.WD$id1),as.character(d.a.WD$id2)))[-(1:length(levels(d.a.WD$id1)))]
+
+#[d.m1]----
+#either birds in the dyads moved
+d.m1 <- read_xlsx("../output/analysis_dynamics/data/output_colony_either_moved.xlsx") %>% 
+  mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+d.m1$id1 <- as.factor(c(levels(d.m1$id2),as.character(d.m1$id1)))[-(1:length(levels(d.m1$id2)))] 
+d.m1$id2 <- as.factor(c(levels(d.m1$id1),as.character(d.m1$id2)))[-(1:length(levels(d.m1$id1)))]
+
+#[d.m1.mis]----
+#either birds in the dyads moved
+d.m1.mis <- read_xlsx("../output/analysis_dynamics/data/output_colony_either_moved_60missingness.xlsx") %>% 
+  mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+d.m1.mis$id1 <- as.factor(c(levels(d.m1.mis$id2),as.character(d.m1.mis$id1)))[-(1:length(levels(d.m1.mis$id2)))] 
+d.m1.mis$id2 <- as.factor(c(levels(d.m1.mis$id1),as.character(d.m1.mis$id2)))[-(1:length(levels(d.m1.mis$id1)))]
+
+
+#[d.allm.rall.W]----
+#moving colonies, overall rainfal, wet season
+d.allm.rall.W <- read_xlsx("../output/analysis_dynamics/data/output_colony_dissolved and new colony_within and across dyads_rainfall all_wet.xlsx") %>% 
+  mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+d.allm.rall.W$id1 <- as.factor(c(levels(d.allm.rall.W$id2),as.character(d.allm.rall.W$id1)))[-(1:length(levels(d.allm.rall.W$id2)))] 
+d.allm.rall.W$id2 <- as.factor(c(levels(d.allm.rall.W$id1),as.character(d.allm.rall.W$id2)))[-(1:length(levels(d.allm.rall.W$id1)))]
+
+#[d.allm.rall.D]----
+#moving colonies, overall rainfal, wet season
+d.allm.rall.D <- read_xlsx("../output/analysis_dynamics/data/output_colony_dissolved and new colony_within and across dyads_rainfall all_dry.xlsx") %>% 
+  mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+d.allm.rall.D$id1 <- as.factor(c(levels(d.allm.rall.D$id2),as.character(d.allm.rall.D$id1)))[-(1:length(levels(d.allm.rall.D$id2)))] 
+d.allm.rall.D$id2 <- as.factor(c(levels(d.allm.rall.D$id1),as.character(d.allm.rall.D$id2)))[-(1:length(levels(d.allm.rall.D$id1)))]
+
+#all dyads
+#[d.a.rall.W]----
+#moving colonies, overall rainfal, wet season
+d.a.rall.W <- read_xlsx("../output/analysis_dynamics/data/output_colony_move&stay_alldyad_rainfall_all_wet.xlsx") %>% 
+  mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+d.a.rall.W$id1 <- as.factor(c(levels(d.a.rall.W$id2),as.character(d.a.rall.W$id1)))[-(1:length(levels(d.a.rall.W$id2)))] 
+d.a.rall.W$id2 <- as.factor(c(levels(d.a.rall.W$id1),as.character(d.a.rall.W$id2)))[-(1:length(levels(d.a.rall.W$id1)))]
+
+#[d.a.rall.D]----
+#moving colonies, overall rainfal, wet season
+d.a.rall.D <- read_xlsx("../output/analysis_dynamics/data/output_colony_move&stay_alldyad_rainfall_all_dry.xlsx") %>% 
+  mutate(id1 = as.factor(id1), id2 = as.factor(id2), id12 = as.factor(id12)) %>% 
+  as.data.frame()
+
+d.a.rall.D$id1 <- as.factor(c(levels(d.a.rall.D$id2),as.character(d.a.rall.D$id1)))[-(1:length(levels(d.a.rall.D$id2)))] 
+d.a.rall.D$id2 <- as.factor(c(levels(d.a.rall.D$id1),as.character(d.a.rall.D$id2)))[-(1:length(levels(d.a.rall.D$id1)))]
+```
+#---------END of data preparation---------
+
+
+```{r}
+library(MCMCglmm)
+library(car)
+library(coda)
+library(beepr)
+devtools::install_github("Euphrasiologist/VCVglmm", dependencies = T, type ="source")
+library(VCVglmm)
+
+source("vif_MCMCglmm.R") #vif.MCMCglmm
+```
+
+#sample size
+```{r}
+#how many moving colonies
+d.allm.wi %>% select(id1colony_status_RD, id1ycolony_t0) %>% distinct() %>%  count(id1colony_status_RD)
+
+#how many birds
+d.allm.wi %>% pull(id1, id2) %>% n_distinct()
+```
+
+#Moving colonies(<50% missing birds), WIHTIN AND ACROSS
+#$raintype
+```{r}
+#
+m.amc.mis50.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*LSraintype,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm.mis50, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#exclude interaction
+m.amc.mis50 <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + LSraintype,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm.mis50, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+vif.MCMCglmm(m.amc.mis50)
+vif.MCMCglmm(m.amc.mis50.i) #r and inter. had vif>3
+```
+
+
+##Dyads WITHIN and ACROSS DISSOLVING+NEW COLONIES, Raintype
+```{r}
+priors2 <- list(R = list(V = 1, fix = 1), G = list(G1 = list(V =1, nu = 0.002), G2 = list(V =1, nu = 0.002)))
+
+m.am <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + LSraintype,
+                 random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+                 family="categorical", 
+                 data=d.allm, 
+                 #nitt = 305000, burnin = 5000, thin = 300, 
+                 verbose = FALSE, prior=priors2, pr=F
+)
+
+#interaction sig.
+m.am.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*LSraintype,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+summary(m.am)
+summary(m.am.i)
+```
+
+#plot interaction for [m.am.i]
+```{r}
+#plot predictive curve
+newdata <- data.frame(
+    r = seq(min(d.allm$r), max(d.allm$r), length.out = 300),
+    samecolony_t0 = rep(c(0, 1), 150),
+    LSraintype = factor(rep(c("drydry", "drywet", "wetwet"), 100), levels = c("drydry", "drywet", "wetwet"))
+)
+
+mpred <- predict(m.am.i, interval = "confidence", type="response") #give you predicted probabiltiy
+
+dat.Pred <- data.frame(d.allm, mpred) 
+
+#long rain
+ggplot(dat.Pred, aes(x = r, y = fit, colour = LSraintype)) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+  stat_sum(data = dat.Pred, aes(x = r, y = samecolony_t1), alpha = 0.5)
+
+#fixed effect
+MCMCfixplot(m.am.i) 
+```
+
+#examine each raintype
+#[d.am.DD]----
+#Is dry-dry season sig? r is not significant
+```{r}
+#only dry rain
+m.am.DD<- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair, 
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.am.DD, 
+               #nitt = 153000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+) 
+summary(m.am.DD)
+```
+
+#[d.am.WD]----
+#Is wet-dry season sig? r is not significant
+```{r}
+#wet dry rain
+m.am.WD<- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.am.WD, 
+               #nitt = 153000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+) 
+summary(m.am.WD)
+```
+
+#[d.am.WW]----
+#Is wet-wet season sig? r is not significant
+```{r}
+#wet wet rain
+m.am.WW<- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.am.WW, 
+               #nitt = 153000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+) 
+summary(m.am.WW)
+```
+
+
+```{r}
+m.am.i2 <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*longrain_z + r_z*shortrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+summary(m.am.i2)
+
+MCMCfixplot(m.am.i2) 
+```
+
+
+#Dissolving + new colony, WITHIN and ACROSS colonies
+#year plot with MISSINGNESS<60%
+#Raintype
+#Pattern is the same as using all data except r*LSraintype is more sig.
+```{r}
+priors2 <- list(R = list(V = 1, fix = 1), G = list(G1 = list(V =1, nu = 0.002), G2 = list(V =1, nu = 0.002)))
+
+#vif(r_z=3)
+m.amc.mis <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*LSraintype,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm.mis,
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#r NOT standardized
+m.amc.mis2 <- MCMCglmm(samecolony_t1 ~ samegroup_t0 + r + pair + r*LSraintype,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm.mis,
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+```
+
+
+#Dyads WITHIN DISSOLVING+NEW COLONIES
+#Continuous rainfall
+```{r}
+priors2 <- list(R = list(V = 1, fix = 1), G = list(G1 = list(V =1, nu = 0.002), G2 = list(V =1, nu = 0.002)))
+
+#Full model. No interaction. remove for the rest of the models
+m.amc0 <- MCMCglmm(samecolony_t1 ~ samegroup_t0 + r_z + pair + aso_D_t0_z + r_z*longrain_z + r_z*shortrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + id1ycolony_t0, 
+               family="categorical", 
+               data=d.allm.wi, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+
+#VIF>2 in samegroup_t0 and aso_D_to_z
+m.amc1 <- MCMCglmm(samecolony_t1 ~ samegroup_t0 + r_z + pair + aso_D_t0_z + longrain_z + shortrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + id1ycolony_t0, 
+               family="categorical", 
+               data=d.allm.wi, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#exclude $aso_D_t0_z (this one), ower VIF(<1.5)
+m.amc2 <- MCMCglmm(samecolony_t1 ~ samegroup_t0 + r_z + pair + longrain_z + shortrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + id1ycolony_t0, 
+               family="categorical", 
+               data=d.allm.wi, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#revmoe $id1ycolony_t0
+priors <- list(R = list(V = 1, fix = 1), G = list(G1 = list(V =1, nu = 0.002)))
+
+m.amc2.1 <- MCMCglmm(samecolony_t1 ~ samegroup_t0 + r_z + pair + longrain_z + shortrain_z,
+                   random = ~ idv(mult.memb(~ id1 + id2)), 
+                   family="categorical", 
+                   data=d.allm.wi, 
+                   #nitt = 305000, burnin = 5000, thin = 300, 
+                   verbose = FALSE, prior=priors, pr=F
+)
+
+#exclude $samegroup_t0
+m.amc3 <- MCMCglmm(samecolony_t1 ~ aso_D_t0_z + r_z + pair + longrain_z + shortrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + id1ycolony_t0, 
+               family="categorical", 
+               data=d.allm.wi, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#exclude $samegroup_t0, $r, $pair
+m.amc4 <- MCMCglmm(samecolony_t1 ~ aso_D_t0_z + longrain_z + shortrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + id1ycolony_t0, 
+               family="categorical", 
+               data=d.allm.wi, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#exclude $aso_D_t0, $r, $pair
+m.amc5 <- MCMCglmm(samecolony_t1 ~ samegroup_t0 + longrain_z + shortrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + id1ycolony_t0, 
+               family="categorical", 
+               data=d.allm.wi, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#
+m.amc6 <- MCMCglmm(samecolony_t1 ~ samegroup_t0 + longrain_z + shortrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + id1ycolony_t0, 
+               family="categorical", 
+               data=d.allm.wi, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#
+m.amc.i <- MCMCglmm(samecolony_t1 ~ samegroup_t0 + pair + r_z + r_z*longrain_z + r_z*shortrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + id1ycolony_t0, 
+               family="categorical", 
+               data=d.allm.wi, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#vif is only slightly better
+m.amc.i2 <- MCMCglmm(samecolony_t1 ~ samegroup_t0 + pair + r + r*longrain_z + r*shortrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + id1ycolony_t0, 
+               family="categorical", 
+               data=d.allm.wi, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#compare DIC
+sapply(list(m.amc1, m.amc2, m.amc3, m.amc4, m.amc5), "[[", "DIC")
+#m.amc1 has >2 VIF=> no
+#m.amc2 has lower vif
+
+#DECISION: use m.amc2 or m.amc4; I like m.amc2 because the variables have more clear messages
+
+```
+
+#PLOT final model
+```{r}
+MCMCfixplot(m.amc2)
+```
+
+#raintype
+```{r}
+#-----raintype-----
+m.amc.t <- MCMCglmm(samecolony_t1 ~ samegroup_t0 + r_z + pair + LSraintype,
+                   random = ~ idv(mult.memb(~ id1 + id2)) + id1ycolony_t0, 
+                   family="categorical", 
+                   data=d.allm.wi, 
+                  #nitt = 635000, burnin = 5000, thin = 300,  
+                   verbose = FALSE, prior=priors2, pr=F
+)
+
+
+m.amc.t2 <- MCMCglmm(samecolony_t1 ~ samegroup_t0 + r_z + pair + LSraintype,
+                    random = ~ idv(mult.memb(~ id1 + id2)), 
+                    family="categorical", 
+                    data=d.allm.wi, 
+                    #nitt = 605000, burnin = 5000, thin = 300, 
+                    verbose = FALSE, prior=priors, pr=F
+)
+#with interaction
+m.amc.ti <- MCMCglmm(samecolony_t1 ~ samegroup_t0 + r_z + pair + r_z*LSraintype,
+                    random = ~ idv(mult.memb(~ id1 + id2)) + id1ycolony_t0, 
+                    family="categorical", 
+                    data=d.allm.wi, 
+                    #nitt = 605000, burnin = 5000, thin = 300, 
+                    verbose = FALSE, prior=priors2, pr=F
+)
+
+#compare DIC
+sapply(list(m.amc.t, m.amc.t2), "[[", "DIC")
+
+```
+
+#FINAL model with $raintype(for chap2)
+```{r}
+m.amc.t <- readRDS("../output/analysis_dynamics_MCMCglmm/data/model output/m.amc.t.rdata")
+m.amc.t2 <- readRDS("../output/analysis_dynamics_MCMCglmm/data/model output/m.amc.t2.rdata")
+
+summary(m.amc.t)
+```
+
+
+#Dissolving+new colony, only SPRA
+```{r}
+m.amc.s <- MCMCglmm(samecolony_t1 ~ samegroup_t0 + r_z + pair + longrain_z + shortrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + id1colony_t0, 
+               family="categorical", 
+               data=d.allm.wi.S, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+```
+
+#--------rerun for Chap2 deposition-------
+#Dyads WITHIN and ACROSS DISSOLVING+NEW COLONIES
+#Continuous rainfall
+#Compare models with different social factors
+```{r}
+priors2 <- list(R = list(V = 1, fix = 1), G = list(G1 = list(V =1, nu = 0.002), G2 = list(V =1, nu = 0.002)))
+
+#NO rainfall
+m.am.r03 <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair,
+                 random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+                 family="categorical", 
+                 data=d.allm, 
+                 nitt = 305000, burnin = 5000, thin = 300, 
+                 verbose = FALSE, prior=priors2, pr=F
+)
+
+saveRDS(m.am.r0, "../output/analysis_dynamics_MCMCglmm/data/model output/m.am.r0.rdata")
+
+#Long rains, All variables, No interaction
+m.am.r <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + aso_D_t0 + r_z + pair + longrain_z,
+                 random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+                 family="categorical", 
+                 data=d.allm, 
+                 #nitt = 305000, burnin = 5000, thin = 300, 
+                 verbose = FALSE, prior=priors2, pr=F
+)
+
+#remove $aso_D_z
+m.am.r2 <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + longrain_z,
+                 random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+                 family="categorical", 
+                 data=d.allm, 
+                 #nitt = 305000, burnin = 5000, thin = 300, 
+                 verbose = FALSE, prior=priors2, pr=F
+)
+
+#remove $pair
+m.am.r3 <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + aso_D_t0 + r_z + longrain_z,
+                 random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+                 family="categorical", 
+                 data=d.allm, 
+                 #nitt = 305000, burnin = 5000, thin = 300, 
+                 verbose = FALSE, prior=priors2, pr=F
+)
+
+#-----interaction-------
+m.am.r.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*longrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm, 
+               nitt = 305000, burnin = 5000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+saveRDS(m.am.r.i, "../output/analysis_dynamics_MCMCglmm/data/model output/m.am.r.i.rdata")
+
+#compare DIC
+#sapply(list(), "[[", "DIC")
+
+
+#DECISION: 
+```
+
+#Dyads WITHIN and ACROSS DISSOLVING+NEW COLONIES
+#Continuous rainfall
+#Short rains, post-breeding
+```{r}
+priors2 <- list(R = list(V = 1, fix = 1), G = list(G1 = list(V =1, nu = 0.002), G2 = list(V =1, nu = 0.002)))
+
+#short rains w/o interaction
+m.am.rs <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + shortrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#short rains w/interaction
+m.am.rs.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*shortrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#post-breed rains_DSP w/o interactions
+m.am.rp <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + postbreed_DSP_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#post-breed rains w/o interactions
+m.am.rp2 <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + postbreed_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+
+#post-breed rains_DSP w/interactions
+m.am.rp.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*postbreed_DSP_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#post-breed rains w/interactions
+m.am.rp2.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*postbreed_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#post-breed rains w/interactions
+m.am.rpl2.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*longrain_z + r_z*postbreed_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#long rains + short rains with interactions (not sig.)
+m.am.rsl.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*longrain_z + r_z*shortrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm, 
+               nitt = 253000, burnin = 5000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+saveRDS(m.am.rsl.i, "../output/analysis_dynamics_MCMCglmm/data/model output/m.am.rsl.i.rdata")
+
+#long rains + short rains w/o interactions
+m.am.rsl <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + longrain_z + shortrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#overall rainfall
+m.am.rall.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*rainfall_all_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm, 
+               nitt = 305000, burnin = 5000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+saveRDS(m.am.rall.i, "../output/analysis_dynamics_MCMCglmm/data/model output/m.am.rall.i.rdata")
+```
+
+#plot interaction/moving colonies
+#long rains
+```{r}
+mpred.am.ri <- predict(m.am.r.i, interval = "confidence", type="response") #give you predicted probabiltiy
+
+newdat.am.ri <- data.frame(d.allm, mpred.am.ri) %>% 
+  mutate(R25 = factor(ifelse(r >= 0.25, 1, 0)), 
+         rainall_type = ifelse(rainfall_all_z >0, "wet", "dry")) #kin(>=0.25)
+
+saveRDS(newdat.am.ri, "../output/analysis_dynamics_MCMCglmm/data/model output/newdat.am.ri.rdata")
+
+mpred.am.ri <- readRDS("../output/analysis_dynamics_MCMCglmm/data/model output/newdat.am.ri.rdata")
+
+#long rain
+ggplot(newdat.am.ri, aes(x = r, y = fit, colour = rainall_type)) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+  stat_sum(data = newdat.am.ri, aes(x = r, y = samecolony_t1), alpha = 0.5) +
+  labs(x = "Relatedness", y = str_wrap("Probability of settling in the same colony", width = 25), color = "rainfall") +
+theme(axis.title.x = element_text(size=16, face="bold"),
+axis.text.x = element_text(size=14),
+axis.title.y = element_text(size=16, face="bold"),
+axis.text.y = element_text(size=14),
+legend.title = element_text(size=12)
+)
+
+ggsave("FigX_r and long rain inter_m.am.r.i.png", dev = "png", path = "../output/analysis_dynamics_MCMCglmm/fig/")
+
+#r
+ggplot(newdat.am.ri, aes(x = rainfall_all_z, y = fit, colour = R25)) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+  stat_sum(data = newdat.am.ri, aes(x = r, y = samecolony_t1), alpha = 0.5) +
+  labs(x = "Rainfall", y = str_wrap("Probability of settling in the same colony", width = 25), color = "kin") +
+theme(axis.title.x = element_text(size=16, face="bold"),
+axis.text.x = element_text(size=14),
+axis.title.y = element_text(size=16, face="bold"),
+axis.text.y = element_text(size=14),
+legend.title = element_text(size=12)
+)
+
+ggsave("FigX.2_r and long rain inter_m.am.r.i.png", dev = "png", path = "../output/analysis_dynamics_MCMCglmm/fig/")
+```
+
+#moving colonies
+#Test dry wet years (all rainfall) separately
+```{r}
+#wet
+#[m.allm.rall.w]----
+m.allm.rall.w <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm.rall.W, 
+               nitt = 305000, burnin = 5000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+) 
+
+#dry
+#[m.allm.rall.d]----
+m.allm.rall.d <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm.rall.D, 
+               nitt = 305000, burnin = 5000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+) 
+
+```
+
+#all rainfall
+```{r}
+mpred.am.rall <- predict(m.am.rall.i, interval = "confidence", type="response") #give you predicted probabiltiy
+
+newdat.am.rall <- data.frame(d.allm, mpred.am.rall) %>% 
+  mutate(R25 = factor(ifelse(r >= 0.25, 1, 0)), 
+         rainall_type = ifelse(rainfall_all_z >0, "wet", "dry")) #kin(>=0.25)
+
+saveRDS(newdat.rall, "../output/analysis_dynamics_MCMCglmm/data/model output/newdat.rall.rdata")
+
+mpred.am.rall <- readRDS("../output/analysis_dynamics_MCMCglmm/data/model output/newdat.rall.rdata")
+
+#long rain
+ggplot(newdat.am.rall, aes(x = r, y = fit, colour = rainall_type)) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+  stat_sum(data = newdat.am.rall, aes(x = r, y = samecolony_t1), alpha = 0.5) +
+  labs(x = "Relatedness", y = str_wrap("Probability of settling in the same colony", width = 25), color = "rainfall") +
+theme(axis.title.x = element_text(size=16, face="bold"),
+axis.text.x = element_text(size=14),
+axis.title.y = element_text(size=16, face="bold"),
+axis.text.y = element_text(size=14),
+legend.title = element_text(size=12)
+)
+
+ggsave("FigX_r and overall rainfall inter_m.am.rall.i.png", dev = "png", path = "../output/analysis_dynamics_MCMCglmm/fig/")
+
+#r
+ggplot(newdat.rall, aes(x = rainfall_all_z, y = fit, colour = R25)) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+  stat_sum(data = newdat.rall, aes(x = r, y = samecolony_t1), alpha = 0.5) +
+  labs(x = "Rainfall", y = str_wrap("Probability of settling in the same colony", width = 25), color = "kin") +
+theme(axis.title.x = element_text(size=16, face="bold"),
+axis.text.x = element_text(size=14),
+axis.title.y = element_text(size=16, face="bold"),
+axis.text.y = element_text(size=14),
+legend.title = element_text(size=12)
+)
+```
+
+
+#Dyads WITHIN and ACROSS DISSOLVING+NEW COLONIES, <60% missingness
+#Continuous rainfall
+```{r}
+#long rains w/interactions
+m.amis.r.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*longrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm.mis, 
+               nitt = 305000, burnin = 5000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+saveRDS(m.amis.r.i, "../output/analysis_dynamics_MCMCglmm/data/model output/m.amis.r.i.rdata")
+
+#post-breed rains w/interactions
+m.amis.rpl2.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*longrain_z + r_z*postbreed_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm.mis, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#long rains + short rains with interactions
+m.amis.rsl.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*longrain_z + r_z*shortrain_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.allm.mis, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+```
+
+
+
+#----------END of moving colony---------#
+
+
+
+
+
+
+
+
+
+#----*All dyads; continuous rainfall*-----
+#For Chap2 deposition
+```{r}
+#long rain; No interaction
+m.a.rl <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z + longrain_z,
+              random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+              family="categorical", 
+              data=d.a, 
+              #nitt = 153000, burnin = 3000, thin = 150,
+              verbose = FALSE, prior=priors2, pr=F
+               ) 
+
+
+
+#long rain; interaction
+m.a.rl.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*longrain_z,
+              random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+              family="categorical", 
+              data=d.a, 
+              nitt = 305000, burnin = 5000, thin = 150,
+              verbose = FALSE, prior=priors2, pr=F
+               ) 
+
+saveRDS(m.a.rl.i, "../output/analysis_dynamics_MCMCglmm/data/model output/m.a.rl.i.rdata")
+
+#short rain; No interaction
+m.a.rs <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z + shortrain_z,
+              random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+              family="categorical", 
+              data=d.a, 
+              #nitt = 153000, burnin = 3000, thin = 150,
+              verbose = FALSE, prior=priors2, pr=F
+               ) 
+
+#short rain; interaction
+m.a.rs.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*shortrain_z,
+              random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+              family="categorical", 
+              data=d.a, 
+              #nitt = 153000, burnin = 3000, thin = 150,
+              verbose = FALSE, prior=priors2, pr=F
+               ) 
+
+#Long rain + short rain; NO interaction
+m.a.rsl <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z + longrain_z + shortrain_z,
+              random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+              family="categorical", 
+              data=d.a, 
+              #nitt = 153000, burnin = 3000, thin = 150,
+              verbose = FALSE, prior=priors2, pr=F
+               )
+
+#Long rain + short rain; interaction
+m.a.rsl.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*longrain_z + r_z*shortrain_z,
+              random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+              family="categorical", 
+              data=d.a, 
+              nitt = 305000, burnin = 5000, thin = 300,
+              verbose = FALSE, prior=priors2, pr=F
+               ) 
+
+saveRDS(m.a.rsl.i, "../output/analysis_dynamics_MCMCglmm/data/model output/m.a.rsl.i.rdata")
+
+#post-breed rains w/interactions
+m.a.rpl2.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*longrain_z + r_z*postbreed_z,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.a, 
+               #nitt = 253000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+)
+
+#overall rainfall; interaction
+m.a.rall.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + pair + r_z*rainfall_all_z,
+              random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+              family="categorical", 
+              data=d.a, 
+              nitt = 305000, burnin = 5000, thin = 150,
+              verbose = FALSE, prior=priors2, pr=F
+               ) 
+
+#saveRDS(m.a.rall.i, "../output/analysis_dynamics_MCMCglmm/data/model output/m.a.rall.i.rdata")
+```
+
+#ALL dyads
+#Test dry wet years (all rainfall) separately
+```{r}
+#wet
+#[m.a.rall.w]----
+m.a.rall.w <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.a.rall.W, 
+               nitt = 305000, burnin = 5000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+) 
+
+#dry
+#[m.a.rall.d]----
+m.a.rall.d <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.a.rall.D, 
+               nitt = 305000, burnin = 5000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+) 
+
+```
+
+
+
+#ALL dyads; <60% missingness
+```{r}
+#overall rainfall; interaction
+m.a.mis.rall.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*rainfall_all_z,
+              random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+              family="categorical", 
+              data=d.a.mis, 
+              nitt = 305000, burnin = 5000, thin = 150,
+              verbose = FALSE, prior=priors2, pr=F
+               ) 
+
+saveRDS(m.a.mis.rall.i, "../output/analysis_dynamics_MCMCglmm/data/model output/m.a.mis.rl.i.rdata")
+
+#Long rain; interaction
+m.a.mis.rl.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*longrain_z,
+              random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+              family="categorical", 
+              data=d.a.mis, 
+              nitt = 305000, burnin = 5000, thin = 150,
+              verbose = FALSE, prior=priors2, pr=F
+               ) 
+
+saveRDS(m.a.mis.rl.i, "../output/analysis_dynamics_MCMCglmm/data/model output/m.a.mis.rl.i.rdata")
+
+#Long rain + short rain; interaction
+m.a.mis.rsl.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*longrain_z + r_z*shortrain_z,
+              random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+              family="categorical", 
+              data=d.a.mis, 
+              nitt = 305000, burnin = 5000, thin = 300,
+              verbose = FALSE, prior=priors2, pr=F
+               ) 
+
+saveRDS(m.a.mis.rsl.i, "../output/analysis_dynamics_MCMCglmm/data/model output/m.a.mis.rsl.i.rdata")
+```
+
+#ALL dyads; either birds moved
+```{r}
+#Long rain + short rain; interaction
+m.a.m1.rsl.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*longrain_z + r_z*shortrain_z,
+              random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+              family="categorical", 
+              data=d.m1, 
+              nitt = 305000, burnin = 5000, thin = 300,
+              verbose = FALSE, prior=priors2, pr=F
+               ) 
+
+saveRDS(m.a.m1.rsl.i, "../output/analysis_dynamics_MCMCglmm/data/model output/m.a.m1.rsl.i.rdata")
+```
+
+#plot interaction/all colonies/either moved
+#long rains + short rains
+```{r}
+mpred.m.a.m1.rsl.i <- predict(m.a.m1.rsl.i, interval = "confidence", type="response") #give you predicted probabiltiy
+
+newdat.m.a.m1.rsl.i <- data.frame(d.m1, mpred.m.a.m1.rsl.i) %>% 
+  mutate(R25 = factor(ifelse(r >= 0.25, 1, 0)), 
+         rainall_type = ifelse(rainfall_all_z >0, "wet", "dry")) #kin(>=0.25)
+
+saveRDS(newdat.m.a.m1.rsl.i , "../output/analysis_dynamics_MCMCglmm/data/model output/nnewdat.m.a.m1.rsl.i.rdata")
+
+newdat.m.a.m1.rsl.i <- readRDS("../output/analysis_dynamics_MCMCglmm/data/model output/newdat.m.a.m1.rsl.i.rdata")
+
+#long rain
+ggplot(newdat.m.a.m1.rsl.i, aes(x = r, y = fit, colour = rainall_type)) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+  stat_sum(data = newdat.m.a.m1.rsl.i, aes(x = r, y = samecolony_t1), alpha = 0.5) +
+  labs(x = "Relatedness", y = str_wrap("Probability of settling in the same colony", width = 25), color = "rainfall") +
+theme(axis.title.x = element_text(size=16, face="bold"),
+axis.text.x = element_text(size=14),
+axis.title.y = element_text(size=16, face="bold"),
+axis.text.y = element_text(size=14),
+legend.title = element_text(size=12)
+)
+
+ggsave("FigX_r and LR and SR_inter_m.a.m1.rsl.i.png", dev = "png", path = "../output/analysis_dynamics_MCMCglmm/fig/")
+
+#r
+ggplot(newdat.m.a.m1.rsl.i, aes(x = rainfall_all_z, y = fit, colour = R25)) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+  stat_sum(data = newdat.m.a.m1.rsl.i, aes(x = r, y = samecolony_t1), alpha = 0.5) +
+  labs(x = "Rainfall", y = str_wrap("Probability of settling in the same colony", width = 25), color = "kin") +
+theme(axis.title.x = element_text(size=16, face="bold"),
+axis.text.x = element_text(size=14),
+axis.title.y = element_text(size=16, face="bold"),
+axis.text.y = element_text(size=14),
+legend.title = element_text(size=12)
+)
+
+ggsave("FigX.2_r and LR and SR_inter_m.a.m1.rsl.i.png", dev = "png", path = "../output/analysis_dynamics_MCMCglmm/fig/")
+```
+
+
+
+#ALL dyads; either birds moved; <60%missingness
+```{r}
+#Long rain + short rain; interaction
+m.a.m1.mis.rsl.i <- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*longrain_z + r_z*shortrain_z,
+              random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+              family="categorical", 
+              data=d.m1.mis, 
+              nitt = 305000, burnin = 5000, thin = 300,
+              verbose = FALSE, prior=priors2, pr=F
+               ) 
+
+saveRDS(m.a.m1.mis.rsl.i, "../output/analysis_dynamics_MCMCglmm/data/model output/m.a.m1.mis.rsl.i.rdata")
+
+```
+
+#plot interaction for longrains[m.a.rl.i]
+```{r}
+mpred.marli <- predict(m.a.rl.i, interval = "confidence", type="response") #give you predicted probabiltiy
+
+newdat.marli <- data.frame(d.a, mpred.marli) %>% 
+  mutate(R25 = factor(ifelse(r >= 0.25, 1, 0))) #kin(>=0.25)
+
+saveRDS(newdat.marli, "../output/analysis_dynamics_MCMCglmm/data/model output/newdat.marli.rdata")
+
+newdat.marli <- readRDS("../output/analysis_dynamics_MCMCglmm/data/model output/newdat.marli.rdata")
+
+#long rain
+ggplot(newdat.marli, aes(x = r, y = fit, colour = Lraintype_t0)) +
+geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+stat_sum(data = newdat.marli, aes(x = r, y = samecolony_t1), alpha = 0.5) +
+labs(x = "Relatedness", y = str_wrap("Probability of settling in the same colony", width = 25), color = "rainfall") +
+theme(axis.title.x = element_text(size=16, face="bold"),
+axis.text.x = element_text(size=14),
+axis.title.y = element_text(size=16, face="bold"),
+axis.text.y = element_text(size=14),
+legend.title = element_text(size=12)
+)
+
+ggsave("Fig5_r and longrain inter_m.arli.png", dev = "png", path = "../output/analysis_dynamics_MCMCglmm/fig/")
+
+
+#r(weird)
+ggplot(newdat.marli, aes(x = longrain_LTD, y = fit, colour = R25)) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+  stat_sum(data = newdat.marli, aes(x = longrain_LTD, y = samecolony_t1), alpha = 0.5) +
+labs(x = "Rainfall", y = str_wrap("Probability of settling in the same colony", width = 25), color = "rainfall") +
+theme(axis.title.x = element_text(size=16, face="bold"),
+axis.text.x = element_text(size=14),
+axis.title.y = element_text(size=16, face="bold"),
+axis.text.y = element_text(size=14),
+legend.title = element_text(size=12)
+)
+
+ggsave("Fig5.2_r and longrain inter_m.arli.png", dev = "png", path = "../output/analysis_dynamics_MCMCglmm/fig/")
+
+```
+
+
+#plot interaction for longrains[m.a.rsl.i]
+```{r}
+mpred <- predict(m.a.rsl.i, interval = "confidence", type="response") #give you predicted probabiltiy
+
+newdat <- data.frame(d.a, mpred) %>% 
+  mutate(R25 = factor(ifelse(r >= 0.25, 1, 0))) #kin(>=0.25)
+
+saveRDS(newdat, "../output/analysis_dynamics_MCMCglmm/data/model output/newdat.marsli.rdata")
+
+newdat <- readRDS("../output/analysis_dynamics_MCMCglmm/data/model output/newdat.marsli.rdata")
+
+#long rain
+ggplot(newdat, aes(x = r, y = fit, colour = Lraintype_t0)) +
+geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+stat_sum(data = newdat, aes(x = r, y = samecolony_t1), alpha = 0.5) +
+labs(x = "Relatedness", y = str_wrap("Probability of settling in the same colony", width = 25), color = "rainfall") +
+theme(axis.title.x = element_text(size=16, face="bold"),
+axis.text.x = element_text(size=14),
+axis.title.y = element_text(size=16, face="bold"),
+axis.text.y = element_text(size=14),
+legend.title = element_text(size=12)
+)
+
+ggsave("Fig5_r and longrain inter_m.arsli.png", dev = "png", path = "../output/analysis_dynamics_MCMCglmm/fig/")
+
+
+#r(weird)
+ggplot(newdat, aes(x = longrain_LTD, y = fit, colour = R25)) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+  stat_sum(data = newdat, aes(x = longrain_LTD, y = samecolony_t1), alpha = 0.5) +
+labs(x = "Rainfall", y = str_wrap("Probability of settling in the same colony", width = 25), color = "rainfall") +
+theme(axis.title.x = element_text(size=16, face="bold"),
+axis.text.x = element_text(size=14),
+axis.title.y = element_text(size=16, face="bold"),
+axis.text.y = element_text(size=14),
+legend.title = element_text(size=12)
+)
+
+ggsave("Fig5.2_r and longrain inter_m.arsli.png", dev = "png", path = "../output/analysis_dynamics_MCMCglmm/fig/")
+
+```
+
+#plot interaction for overall rainfall[m.a.rall.i]
+```{r}
+mpred.rall.i <- predict(m.a.rall.i, interval = "confidence", type="response") #give you predicted probabiltiy
+
+newdat.m.a.rall.i <- data.frame(d.a, mpred.rall.i) %>% 
+  mutate(R25 = factor(ifelse(r >= 0.25, 1, 0))) #kin(>=0.25)
+
+saveRDS(newdat.m.a.rall.i, "../output/analysis_dynamics_MCMCglmm/data/model output/newdat.m.a.rall.i.rdata")
+
+newdat.m.a.rall.i <- readRDS("../output/analysis_dynamics_MCMCglmm/data/model output/newdat.m.a.rall.i.rdata")
+
+#long rain
+ggplot(newdat.m.a.rall.i, aes(x = r, y = fit, colour = Lraintype_t0)) +
+geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+stat_sum(data = newdat.m.a.rall.i, aes(x = r, y = samecolony_t1), alpha = 0.5) +
+labs(x = "Relatedness", y = str_wrap("Probability of settling in the same colony", width = 25), color = "rainfall") +
+theme(axis.title.x = element_text(size=14, face="bold"),
+axis.text.x = element_text(size=12),
+axis.title.y = element_text(size=14, face="bold"),
+axis.text.y = element_text(size=12),
+legend.title = element_text(size=12)
+)
+
+ggsave("FigX_r and rainall_all inter_m.arallli.png", dev = "png", path = "../output/analysis_dynamics_MCMCglmm/fig/")
+
+
+#r
+ggplot(newdat.m.a.rall.i, aes(x = longrain_LTD, y = fit, colour = R25)) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+  stat_sum(data = newdat.m.a.rall.i, aes(x = longrain_LTD, y = samecolony_t1), alpha = 0.5) +
+labs(x = "Rainfall", y = str_wrap("Probability of settling in the same colony", width = 25), color = "kin or non-kin") +
+theme(axis.title.x = element_text(size=14, face="bold"),
+axis.text.x = element_text(size=12),
+axis.title.y = element_text(size=14, face="bold"),
+axis.text.y = element_text(size=12),
+legend.title = element_text(size=12)
+)
+
+ggsave("FigX.2_r and longrain inter_m.aralli.png", dev = "png", path = "../output/analysis_dynamics_MCMCglmm/fig/")
+
+```
+
+
+#ALL dyads; raintype
+```{r}
+#------------
+m.a<- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair + r_z*LSraintype,
+              random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+              family="categorical", 
+              data=d.a, 
+              #nitt = 153000, burnin = 3000, thin = 150,
+              verbose = FALSE, prior=priors2, pr=F
+               ) 
+
+summary(m.a)
+```
+
+
+#plot interaction for [m.a]
+```{r}
+#plot predictive curve
+newdata <- data.frame(
+    r = seq(min(d.a$r), max(d.a$r), length.out = 300),
+    samecolony_t0 = rep(c(0, 1), 150),
+    LSraintype = factor(rep(c("drydry", "drywet", "wetwet"), 100), levels = c("drydry", "drywet", "wetwet"))
+)
+
+mpred.m.a <- predict(m.a, interval = "confidence", type="response") #give you predicted probabiltiy
+
+dat.Pred.m.a <- data.frame(d.a, mpred.m.a) 
+
+#long rain
+ggplot(dat.Pred.m.a, aes(x = r, y = fit, colour = LSraintype)) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+  stat_sum(data = dat.Pred, aes(x = r, y = samecolony_t1), alpha = 0.5)
+
+#fixed effect
+MCMCfixplot(m.a) 
+
+```
+
+#[d.a.DD]----
+#Is dry-dry season sig? r is not significant
+```{r}
+#only dry rain
+m.a.DD<- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair, 
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.a.DD, 
+               #nitt = 153000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+) 
+summary(m.a.DD)
+```
+
+#[d.a.WD]----
+#Is wet-dry season sig? r is not significant
+```{r}
+#wet dry rain
+m.a.WD<- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.a.WD, 
+               #nitt = 153000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+) 
+summary(m.a.WD)
+```
+
+#[d.a.WW]----
+#Is wet-wet season sig? r is not significant
+```{r}
+#wet wet rain
+m.a.WW<- MCMCglmm(samecolony_t1 ~ samecolony_t0 + samegroup_t0 + r_z + pair,
+               random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+               family="categorical", 
+               data=d.a.WW, 
+               #nitt = 153000, burnin = 3000, thin = 150, 
+               verbose = FALSE, prior=priors2, pr=F
+) 
+summary(m.a.WW)
+```
+
+#ALL dyads, either bird move across colonies
+```{r}
+priors <- list(R = list(V = 1, fix = 1), G = list(G1 = list(V =1, nu = 0.002)))
+#test if having $samegroup and $samecolony in the model
+
+m.test01 <- MCMCglmm(FF_dyad ~ samegroup_t0 + samecolony_t0 + r_z + pair + shortrain_z,
+              random = ~ idv(mult.memb(~ id1 + id2)) + plot, 
+              family="categorical", 
+              data=d.a[d.a$FF_dyad!="unchanged",], 
+              #nitt = 153000, burnin = 3000, thin = 150,
+              verbose = FALSE, prior=priors2, pr=F
+               ) 
+```
+
+
+

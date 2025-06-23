@@ -1,0 +1,902 @@
+---
+title: "GCSW_chap1_finding groups"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#Gaussian mixed model
+```{r}
+#this can run for a long time for a big data set
+fun_gmm <- function(daytime, breeding = c("B", "BNB"), cutoff){
+  point_data_all <- daytime %>% 
+    filter(sec > 0) %>% #exclude data outside sampling range
+    left_join(BD[,.(nest_date, nestid)], by="nest_date") %>% #add $nestid, $stage
+    left_join(sum_bird_nest_BNB, by = c("year", "color", "nest"))
+  
+  if(breeding == "B"){
+    point_data_all <- point_data_all %>%  
+      filter(!is.na(nestid)) %>% #filter breeding stage
+      filter(BNB_visit > cutoff & B_visit > cutoff)  #filter cutoff
+  }
+  if(breeding == "BNB"){
+    point_data_all <- point_data_all %>% 
+      filter(BNB_visit > cutoff) #filter cutoff
+  }
+  if(breeding == "NB"){
+    point_data_all <- point_data_all %>%  
+      filter(is.na(nestid)) %>% #filter breeding stage
+      filter(BNB_visit > cutoff)  #filter cutoff
+  }
+  
+  point_data_all <- point_data_all %>% 
+    select(date, timestamp.1m, color, nest, nestdate_sec) %>%   #$nest_date as $location
+    mutate(date = yday(date)) %>%  #convert to julian day
+    mutate(timestamp.1m = as.numeric(timestamp.1m)) %>% setDT()
+  
+  sec_l2 <- point_data_all %>% count(nestdate_sec) %>% filter(n > 2)
+  
+  point_data <- point_data_all %>% filter(nestdate_sec %in% sec_l2$nestdate_sec)
+  
+  global_ids <- levels(point_data$color)
+  
+  gmm_data <- asnipe::gmmevents(time = point_data$timestamp.1m,
+                                identity = point_data$color,
+                                location = point_data$nestdate_sec,
+                                global_ids=global_ids
+  )
+  #group name to add in the filename
+  groupname <- paste0(substr(unique(daytime$year), 3, 4), substr(unique(daytime$plot), 1, 1))
+  
+  #output your gmm data!!
+  saveRDS(gmm_data, file = paste0("../output/data/gmm/", breeding, "/v", cutoff, "/", paste0("gmm_", breeding, "_", groupname, "_v", cutoff, ".RData")))
+  
+}
+#------end of function----#
+```
+
+#Generate gbi data (this runs a long time)
+```{r}
+cutoff = 1  
+breeding = "BNB" #B: breeding; BNB:breeding and non-breeding; NB: non-breeding
+
+#output gmm data by year, plot
+daytime.list <- daytime %>% split(list(.$year, .$plot), drop = T)
+
+lapply(daytime.list, fun_gmm, breeding, cutoff)
+```
+
+#--------DAYTIME---------#
+#Generate adjacency matrix and network objects
+```{r}
+cutoff = 1
+group_type = "BNB"  #B, NB, BNB
+index = "SRI"
+format = "gbi"
+
+data_type = "gmm"
+g_type = "daytime" #breeding or daytime
+g_type2 = "B" #breeding = "B", daytime = "D"
+```
+
+```{r}
+#import gmm files, 
+b <- list.files(paste0("../output/data/gmm/", group_type, "/v", cutoff))
+
+#generate list with gbi and event
+f <- function(b){
+  a <- readRDS(paste0("../output/data/gmm/", group_type, "/v", cutoff, "/", b))
+  
+  event <- a$metadata %>% 
+    mutate(date = str_split_fixed(Location, "_", n=3)[,2], 
+         nest = str_split_fixed(Location, "_", n=3)[,1]) %>% 
+    mutate(date = lubridate::mdy(date), 
+           year = as.character(year(date))) %>%
+    mutate(duration_min = (End - Start)/60) %>% #sampling intervals 
+    left_join(nest_list_uni, by = c("nest")) %>%  #add $colony
+    left_join(select(colonywise_sampledate, colony, date, colony_sampled_D), by = c("colony","date")) %>% 
+    left_join(select(colony_excluded, year, colony, excluded), by = c("year", "colony")) %>%
+    mutate(excluded = replace_na(excluded, 0)) %>%
+    setDT()
+  
+  #only systematic sampling and <2hrs sampling interval
+  position_ss <- which(event$colony_sampled_D==1 & event$duration_min <=120)
+  
+  event_select <- event[position_ss,]
+  gbi <- a$gbi[position_ss, ]
+  nzindex <- which(colSums(gbi)>0)
+  gbi <- gbi[,nzindex]
+  
+  outputlist <- list("gbi" = gbi, "event" = event_select)
+  return(outputlist)
+}
+
+# make a list for gmm data from all plots, years
+gmm.list <- lapply(b, f)  
+
+# add name to the list
+#names(my_list) <- c(“v”, “m”, “df”)
+if(group_type == "BNB"){
+  v_name <- substr(b, 9, 11)
+} else if(group_type == "B"){
+  v_name <- substr(b, 7, 9)
+} else {
+  v_name <- substr(b, 8, 10)
+}
+
+names(gmm.list) <- v_name
+
+##output gbi objects[gbi_gmm.list]----
+gbi_gmm.list <- list()
+for(i in 1:length(gmm.list)) {
+    outputname <- paste0("gbi_", names(gmm.list)[i])
+    assign(outputname, gmm.list[[i]][[1]]) #fill in adjacency matrix
+    gbi_gmm.list[[i]] <- gmm.list[[i]][[1]]
+    names(gbi_gmm.list)[i] <- outputname  # name each object
+}
+
+#get adjacency matrix[adjm_gmm.list]----
+adjm_gmm.list <- lapply(gbi_gmm.list, asnipe::get_network, data_format = "GBI", association_index = index)
+
+#id list for birds with no association
+idzero.list <- lapply(gbi_gmm.list, colSums) %>% map(~ names(.[.==0]))
+
+#[adjm_gmm_nonz.list]----
+ adjm_gmm_nonz.list <- list()
+
+ for(i in 1: length(adjm_gmm.list)){
+  adjm_gmm_nonz.list[[i]] <- adjm_gmm.list[[i]][!rownames(adjm_gmm.list[[i]]) %in% idzero.list[[i]], !colnames(adjm_gmm.list[[i]]) %in% idzero.list[[i]]]
+ }
+
+#rename your adjm list
+name_adjm <- paste0("adjm_", substr(names(adjm_gmm.list), 5, 7))
+names(adjm_gmm_nonz.list) <- name_adjm
+names(adjm_gmm.list) <- name_adjm
+
+                  
+#get igraph object
+#[net_gmm.list]----
+net_gmm.list <- lapply(adjm_gmm_nonz.list, igraph::graph.adjacency, mode = "undirected", diag = F, weighted = T) #this include inds with zero association
+
+#rename your net list
+name_net <- paste0("net_", substr(names(net_gmm.list), 6, 8))
+names(net_gmm.list) <- name_net
+```
+
+#save file
+```{r}
+#daytime
+saveRDS(gbi_gmm.list, paste0("../output/data/network/plot/gmm/gbi_D_plot_gmm_SS_all_", index, "_v", cutoff, ".list.RData"))
+saveRDS(net_gmm.list, paste0("../output/data/network/plot/gmm/net_D_plot_gmm_SS_all_", index, "_v", cutoff, ".list.RData"))
+saveRDS(adjm_gmm.list, paste0("../output/data/network/plot/gmm/adjm_D_plot_gmm_SS_all_", index, "_v", cutoff, ".list.RData"))
+```
+
+#Find daytime groups
+### Generate _dist_ and _community_ objects
+```{r}
+#[dist.list]dist object from association matrix----
+dist.list <- lapply(adjm_gmm_nonz.list, function(x)as.dist(1-x, diag = FALSE, upper = FALSE))
+
+```
+
+### CCC score 
+##### Compare hierarchical clustering methods (this can skip)
+```{r}
+#function to calculate ccc scores
+f_ccc <- function(d){ #d is the dist object
+#Hierarchical clustering
+  hc.c <- hclust(d, method = "complete") 
+  hc.w <- hclust(d, method = "ward.D") 
+  hc.w2 <- hclust(d, method = "ward.D2")
+  hc.s <- hclust(d, method = "single") 
+  hc.a <- hclust(d, method = "average") 
+  
+  #evaluate assocation between clustering results and original association matrix
+  #calculate Cophetic distance(>0.75 means the method is good)
+  coph.c <- cor(cophenetic(hc.c), as.dist(d))
+  coph.w <- cor(cophenetic(hc.w), as.dist(d))
+  coph.w2 <- cor(cophenetic(hc.w2), as.dist(d))
+  coph.s <- cor(cophenetic(hc.s), as.dist(d))
+  coph.a <- cor(cophenetic(hc.a), as.dist(d))
+  #coph.fg <- cor(cophenetic(hc.fg), as.dist(d))
+
+  v <- rbind(coph.c, coph.w, coph.w2, coph.s, coph.a) %>% as.data.frame() %>% setDT(., keep.rownames = "method") %>% rename(CCC=V1) %>% arrange(desc(CCC))
+  
+  return(v)
+}
+```
+
+```{r}
+#[ccc_best.df]choose the best clustering method----
+ccc.list <- lapply(dist.list, f_ccc) 
+ccc.df <- do.call(rbind, ccc.list) %>% rownames_to_column("colony") %>% mutate(colony = substr(colony, 6, 16)) 
+ccc_best.df <- ccc.df %>% group_by(colony) %>% arrange(-CCC) %>%  slice(1) %>% ungroup() 
+print(ccc_best.df)
+```
+## Conclusion: AVERAGE-linkage has the highest score (agree with Whitehead's observation)
+
+
+#find the cutoff point for dendrogram
+#method: optimization of modularity
+```{r}
+#[hca.list]hclust object for average-linkage methods----
+hca.list <- lapply(dist.list, function(x)hclust(x, method = "average")) 
+
+
+#function to calculate $modularity and $n_group for each branch height
+cutoff.list <- list()
+
+for(i in 1:length(hca.list)){
+  hca <- hca.list[[i]]
+  netname <- paste0("net_", substr(names(hca.list)[i], 6, 8))
+  net <- net_gmm.list[[netname]]
+  height <- hca$height  #branch height
+  
+  n_group <- vector() #number of groups
+  mod <- vector() #modularity
+  association <- vector()
+  
+  for(j in 1:length(height)){
+    grp <- cutree(hca, h = height[j]) #group membership
+  
+    a <- max(grp) #number of groups
+    b <- modularity(net, membership = grp, weights = E(net)$weight) #modularity
+  
+    n_group[j] <- a
+    mod[j] <- b
+    association[j] <- 1-height[j]
+    
+  }  #end of j loop
+  
+  cutoff.list[[i]] <- data.frame(n_group, mod, association) %>% mutate(net = netname) %>% mutate(diff_mod = round(lead(mod)-mod, 4), diff_asso = round(lead(association)-association, 4))
+} #end of i loop
+
+#[cutoff.df]----
+cutoff.df <- rbindlist(cutoff.list) %>% 
+  mutate(year = paste0("20", substr(net, 5, 6)), 
+         plot = substr(net, 7, 7)) %>% 
+  mutate(plot = dplyr::recode(plot, "M" = "MSTO", "S" = "SPRA", "L" = "LLOD")) %>% 
+  mutate(mod = round(mod, digits = 3), association = round(association, digits = 3))
+
+#[cutoff.df.l]----
+#gather modularity and association
+cutoff.df.l <- cutoff.df %>% 
+  gather(., key = "measure", value = "value", c("mod", "association")) %>% 
+  gather(., key = "delta_measure", value = "delta", c("diff_mod", "diff_asso"))
+
+#[max_mod]maximum modularity----
+#this has not filtered out the assocation below random
+#this has not filtered only "colony members"
+#because these data include random visitors, some of modularities are very low
+max_mod <- cutoff.df %>% 
+  select(-diff_mod, -diff_asso) %>% 
+  distinct() %>% 
+  group_by(net) %>% 
+  slice(which(mod == max(mod))) %>% #select the cutoff with highest modularity
+  mutate(mod = round(mod, 5)) %>% 
+  group_by(net) %>% 
+  mutate(n = sum(n())) %>% 
+  filter(n_group == max(n_group)) %>% #choose the max number of groups in the case where there are more than two cutoff with the highest modularity
+  setDT()
+
+#write_xlsx(max_mod, paste0("../output/cluster analysis/data/max_modularity_hc_gmm_all_D_", group_type, "_v", cutoff, "_", group_type, ".xlsx"))
+```
+
+
+## output group membership from hierarchical clustering
+```{r}
+#function to generate group membership
+group_hca.list <- list()
+
+for(i in 1:length(hca.list)){
+  hca <- hca.list[[i]]
+  netname <- paste0("net_", substr(names(hca.list)[i], 6, 8))
+  v_year <- paste0("20", substr(netname, 5,6))
+  v_plot <- substr(netname, 7, 7)
+
+  grp <- cutree(hca, k = max_mod[net==netname]$n_group) #or k= (number of groups) as opposed to h
+  group_hc <- reshape2::melt(grp, value.name = "group") %>% 
+    rownames_to_column("color") %>% 
+    arrange(group) %>% 
+    mutate(net = netname, 
+           year = v_year, 
+           plot = v_plot, 
+           groupid = paste0(substr(v_year, 3, 4), substr(v_plot, 1, 1), g_type2, "g", group))
+  
+  group_hca.list[[i]] <- group_hc  #group member list
+} 
+
+#[group_member_hc]output group members from hierarchical clustering----
+group_member_hc <- rbindlist(group_hca.list) %>% mutate(gtype = g_type) %>% mutate(plot = recode(plot, "M" = "MSTO", "S" = "SPRA","L" = "LLOD"))
+```
+
+```{r}
+saveRDS(group_member_hc, paste0("../output/cluster analysis/data/plot/2013-2017 weaver groups_D_plot_SS_all_", data_type, "_", index, "_v", cutoff,"_hc", ".RData"))
+
+write_xlsx(group_member_hc, paste0("../output/cluster analysis/data/plot/2013-2017 weaver groups_D_plot_SS_all_", data_type, "_", index, "_v", cutoff,"_hc", ".xlsx"))
+```
+
+#-----------NIGHTTIME-------------#
+```{r}
+cutoff = 0
+group_type = "NB"  #"BNB", "B", "NB"
+#status = 0  #0=BNB, 1=B
+index = "SRI"
+format = "gbi"
+
+g_type = "N" #nighttime
+subgroup = "nb" #"nb", "b", ""(BNB)
+```
+
+#for sleepnest, only systematic sampling
+```{r}
+source("fun_N_net.R")
+
+#[sleepnest_ss]----
+sleepnest_ss <- sleepnest %>%  
+  left_join(select(colonywise_sampledate, colony, date, colony_sampled), 
+            by = c("colony", "sleep_date" = "date")) %>% 
+  left_join(select(colony_excluded, year, colony, excluded), by = c("year", "colony")) %>%
+    mutate(excluded = replace_na(excluded, 0)) %>% #add $excluded, colonies only active in Mar or Jun
+  filter(colony_sampled == 1) #$colony_sampled is for nighttime
+
+output.ls <- sleepnest_ss %>% 
+  left_join(sum_bird_nest_BNB, by = c("year", "plot", "colony", "color", "nest")) %>%
+  mutate(BNB_visit = replace_na(BNB_visit, 0), 
+         B_visit = replace_na(B_visit, 0)) %>% 
+  #mutate(breeding = if_else(!is.na(nestid), 1, 0)) %>% 
+  #filter(breeding >= status) %>% #breeding or non-breeding
+  filter(no_nights > cutoff) %>% #cutoff 
+  setDT() %>% 
+  split(list(.$year, .$plot), drop = T) %>% 
+  map(~ fun_N_net(., group_type, index, format)) 
+
+# output adjacency objects [adj.list]----
+adjm.list <- list()
+for(i in 1:length(output.ls)) {
+    outputname <- paste0("adjm_", substr(names(output.ls)[i], 3, 4), substr(names(output.ls)[i], 6, 6)) #eg. adjm_15L
+    adjm.list[[i]] <- output.ls[[i]][[1]]
+    names(adjm.list)[i] <- outputname  # name each object
+}
+
+
+# output igraph objects [net.list]----
+net.list <- list()
+for(i in 1:length(output.ls)) {
+    outputname <- paste0("net_", substr(names(output.ls)[i], 3, 4), substr(names(output.ls)[i], 6, 6)) #eg. adjm_15L
+    net.list[[i]] <- output.ls[[i]][[2]]
+    names(net.list)[i] <- outputname  # name each object
+}
+
+# saveRDS(net.list, paste0("../output/data/network/plot/net_N_plot_", group_type, "_SS_all_" ,index, "_v", cutoff, ".list.RData"))
+# saveRDS(adjm.list, paste0("../output/data/network/plot/adjm_N_plot_", group_type, "_SS_all_" ,index, "_v", cutoff, ".list.RData"))
+```
+
+
+#-----Nightime Breeding--------#
+```{r}
+cutoff = 0
+group_type = "B"  #"BNB", "B", "NB"
+#status = 0  #0=BNB, 1=B
+index = "SRI"
+format = "gbi"
+
+g_type = "N" #nighttime
+subgroup = "b" #"nb", "b", ""(BNB)
+```
+
+#for sleepnest, all sampling
+```{r}
+source("fun_N_net.R")
+
+# #[sleepnest_ss]----
+# sleepnest_ss <- sleepnest %>%  
+#   left_join(select(colonywise_sampledate, colony, date, colony_sampled), 
+#             by = c("colony", "sleep_date" = "date")) %>% 
+#   left_join(select(colony_excluded, year, colony, excluded), by = c("year", "colony")) %>%
+#     mutate(excluded = replace_na(excluded, 0)) %>% #add $excluded, colonies only active in Mar or Jun
+#   filter(colony_sampled == 1) #$colony_sampled is for nighttime
+
+output.ls <- sleepnest %>% 
+  left_join(sum_bird_nest_BNB, by = c("year", "plot", "colony", "color", "nest")) %>%
+  mutate(BNB_visit = replace_na(BNB_visit, 0), 
+         B_visit = replace_na(B_visit, 0)) %>% 
+  #mutate(breeding = if_else(!is.na(nestid), 1, 0)) %>% 
+  #filter(breeding >= status) %>% #breeding or non-breeding
+  filter(no_nights > cutoff) %>% #cutoff 
+  setDT() %>% 
+  split(list(.$year, .$plot), drop = T) %>% 
+  map(~ fun_N_net(., group_type, index, format)) 
+
+# output adjacency objects [adj.list]----
+adjm.list <- list()
+for(i in 1:length(output.ls)) {
+    outputname <- paste0("adjm_", substr(names(output.ls)[i], 3, 4), substr(names(output.ls)[i], 6, 6)) #eg. adjm_15L
+    adjm.list[[i]] <- output.ls[[i]][[1]]
+    names(adjm.list)[i] <- outputname  # name each object
+}
+
+
+# output igraph objects [net.list]----
+net.list <- list()
+for(i in 1:length(output.ls)) {
+    outputname <- paste0("net_", substr(names(output.ls)[i], 3, 4), substr(names(output.ls)[i], 6, 6)) #eg. adjm_15L
+    net.list[[i]] <- output.ls[[i]][[2]]
+    names(net.list)[i] <- outputname  # name each object
+}
+
+# saveRDS(net.list, paste0("../output/data/network/plot/net_N_plot_", group_type, "_", index, "_v", cutoff, ".list.RData"))
+# saveRDS(adjm.list, paste0("../output/data/network/plot/adjm_N_plot_", group_type, "_", index, "_v", cutoff, ".list.RData"))
+```
+
+#----------------------------------------------------
+#Now use cluster analysis to get nightitme groups
+
+### Generate _dist_ and _community_ objects
+```{r}
+#[dist.list]dist object from association matrix----
+dist_N.list <- lapply(adjm.list, function(x)as.dist(1-x, diag = FALSE, upper = FALSE))
+```
+
+### CCC score 
+##### Compare hierarchical clustering methods
+```{r}
+#function to calculate ccc scores:f_ccc (Line68, same as daytime)
+f_ccc <- function(d){ #d is the dist object
+#Hierarchical clustering
+  hc.c <- hclust(d, method = "complete") 
+  hc.w <- hclust(d, method = "ward.D") 
+  hc.w2 <- hclust(d, method = "ward.D2")
+  hc.s <- hclust(d, method = "single") 
+  hc.a <- hclust(d, method = "average") 
+  
+  #evaluate assocation between clustering results and original association matrix
+  #calculate Cophetic distance(>0.75 means the method is good)
+  coph.c <- cor(cophenetic(hc.c), as.dist(d))
+  coph.w <- cor(cophenetic(hc.w), as.dist(d))
+  coph.w2 <- cor(cophenetic(hc.w2), as.dist(d))
+  coph.s <- cor(cophenetic(hc.s), as.dist(d))
+  coph.a <- cor(cophenetic(hc.a), as.dist(d))
+  #coph.fg <- cor(cophenetic(hc.fg), as.dist(d))
+
+  v <- rbind(coph.c, coph.w, coph.w2, coph.s, coph.a) %>% as.data.frame() %>% setDT(., keep.rownames = "method") %>% rename(CCC=V1) %>% arrange(desc(CCC))
+  
+  return(v)
+}
+
+#[ccc_best.df]choose the best clustering method----
+ccc_N.list <- lapply(dist_N.list, f_ccc) 
+ccc_N.df <- do.call(rbind, ccc_N.list) %>% rownames_to_column("plot") %>% mutate(plot = substr(plot, 6, 14)) 
+ccc_N_best.df <- ccc_N.df %>% group_by(plot) %>% arrange(-CCC) %>% dplyr:: slice(1) %>% ungroup() 
+print(ccc_N_best.df)
+```
+## Conclusion: AVERAGE-linkage has the highest score (agree with Whitehead's observation)
+
+
+#find the cutoff point for dendrogram
+#method: optimization of modularity
+```{r}
+#[hca.list]hclust object for average-linkage methods----
+hca_N.list <- lapply(dist_N.list, function(x)hclust(x, method = "average")) 
+
+
+#function to calculate $modularity and $n_group for each branch height
+cutoff_N.list <- list()
+for(i in 1:length(hca_N.list)){
+  hca <- hca_N.list[[i]]
+  netname <- paste0("net_", substr(names(hca_N.list)[i], 6, 16))
+  net <- net.list[[netname]]
+  height <- hca$height  #branch height
+  
+  n_group <- vector() #number of groups
+  mod <- vector() #modularity
+  association <- vector()
+  
+  for(j in 1:length(height)){
+    grp <- cutree(hca, h = height[j]) #group membership
+  
+    a <- max(grp) #number of groups
+    b <- modularity(net, membership = grp, weights = E(net)$weight) #modularity
+  
+    n_group[j] <- a
+    mod[j] <- b
+    association[j] <- 1-height[j]
+    
+  }  #end of j loop
+  
+  cutoff_N.list[[i]] <- data.frame(n_group, mod, association) %>% mutate(net = netname) %>% mutate(diff_mod = round(lead(mod)-mod, 4), diff_asso = round(lead(association)-association, 4))
+} #end of i loop
+
+#[cutoff_N.df]----
+cutoff_N.df <- rbindlist(cutoff_N.list)
+
+#[max_mod_N]maximum modularity----
+max_mod_N <- cutoff_N.df %>% 
+  select(-diff_mod, -diff_asso) %>% 
+  distinct() %>% 
+  group_by(net) %>% 
+  dplyr::slice(which(mod == max(mod))) %>% #select the cutoff with highest modularity
+  mutate(mod = round(mod, 2)) %>% 
+  group_by(net) %>% 
+  mutate(n = sum(n())) %>% 
+  filter(association == max(association)) %>% #if there are two cutoff with same modularity, select the cutoff at highter association (bc the lower association are all ZERO)
+  setDT()
+
+#write_xlsx(max_mod_N, paste0("../output/cluster analysis/data/max_modularity_hc_N_SS_all_", group_type, "_v", cutoff, "_", ".xlsx"))
+```
+
+## output group membership from hierarchical clustering
+```{r}
+#function to generate group membership
+group_hca_N.list <- list()
+for(i in 1:length(hca_N.list)){
+  hca <- hca_N.list[[i]]
+  netname <- paste0("net_", substr(names(hca_N.list)[i], 6, 14))
+  v_year <- paste0("20", substr(netname, 5,6))
+  v_plot <- substr(netname, 7, 7)
+
+  grp <- cutree(hca, k = max_mod_N[net==netname]$n_group)#or k= (number of groups) as opposed to h
+  group_hc <- reshape2::melt(grp, value.name = "group") %>% 
+    rownames_to_column("color") %>% 
+    arrange(group) %>% 
+    mutate(net = netname, 
+           year = v_year, 
+           plot = recode(v_plot, "M" = "MSTO", "S" = "SPRA", "L" = "LLOD"),
+           groupid = paste0(substr(v_year, 3, 4), substr(v_plot, 1, 1), g_type, "g", group, subgroup))
+  
+  group_hca_N.list[[i]] <- group_hc  #group member list
+} 
+
+#[group_member_hc]output group members from hierarchical clustering----
+group_member_N_hc <- rbindlist(group_hca_N.list) %>% mutate(gtype = "sleeping") #if"BNB"
+group_member_N_hc <- rbindlist(group_hca_N.list) %>% mutate(gtype = "sleepingNB") #if NB
+group_member_N_hc <- rbindlist(group_hca_N.list) %>% mutate(gtype = "sleepingB") #if B
+```
+
+#save data
+```{r}
+#Systematic sampling
+saveRDS(group_member_N_hc, paste0("../output/cluster analysis/data/plot/2013-2017 weaver groups_N_plot_SS_all_", group_type, "_", index, "_v", cutoff,"_hc", ".RData"))
+
+write_xlsx(group_member_N_hc, paste0("../output/cluster analysis/data/plot/2013-2017 weaver groups_N_plot_SS_all_", group_type, "_", index, "_v", cutoff,"_hc", ".xlsx"))
+```
+
+```{r}
+#ALL sampling
+saveRDS(group_member_N_hc, paste0("../output/cluster analysis/data/plot/2013-2017 weaver groups_N_plot_", group_type, "_", index, "_v", cutoff,"_hc", ".RData"))
+
+write_xlsx(group_member_N_hc, paste0("../output/cluster analysis/data/plot/2013-2017 weaver groups_N_plot_", group_type, "_", index, "_v", cutoff,"_hc", ".xlsx"))
+```
+#--------END of nighttime-------------#
+
+
+
+#--------NESTLING----------#
+#Generate adjacency matrix and network objects
+
+```{r}
+cutoff = 3
+group_type = "NSTL"  #"BNB", "B", "NB"
+index = "SRI"
+format = "gbi"
+
+g_type = "nestling" #nighttime
+g_type2 = "B"
+subgroup = "nstl"
+```
+
+```{r}
+#this can run for a long time for a big data set
+fun_gmm2 <- function(daytime){
+  point_data_all <- daytime %>% 
+    filter(sec > 0) %>%  #exclude data outside sampling range
+    select(date, timestamp.1m, color, nest, nestdate_sec) %>%   #$nest_date as $location
+    mutate(date = yday(date)) %>%  #convert to julian day
+    mutate(timestamp.1m = as.numeric(timestamp.1m)) %>% setDT()
+  
+  sec_l2 <- point_data_all %>% count(nestdate_sec) %>% filter(n > 2)
+  
+  point_data <- point_data_all %>% filter(nestdate_sec %in% sec_l2$nestdate_sec)
+  
+  global_ids <- levels(point_data$color)
+  
+  gmm_data <- asnipe::gmmevents(time = point_data$timestamp.1m,
+                                identity = point_data$color,
+                                location = point_data$nestdate_sec,
+                                global_ids=global_ids
+  )
+  #group name to add in the filename
+  groupname <- paste0(substr(unique(daytime$year), 3, 4), substr(unique(daytime$plot), 1, 1))
+  
+  #output your gmm data!!
+  saveRDS(gmm_data, file = paste0("../output/data/gmm/NSTL/v",cutoff,"/gmm_NSTL_", groupname, "_v",cutoff, ".RData"))
+  
+}
+#------end of function----#
+```
+
+
+
+
+```{r}
+sum_Bvisit_nstl <- dayvisit_B %>% 
+  filter(stageB == "NSTL") %>% 
+  group_by(nestid, color) %>% 
+  summarise(sum_visit = sum(no_visits)) %>% 
+  group_by(nestid) %>% 
+  mutate(pro = round(sum_visit/sum(sum_visit), digits = 2))
+
+hist_Bvisit_nstl <- sum_Bvisit_nstl %>% 
+  group_by(sum_visit) %>% 
+  count(sum_visit) %>% setDT()
+
+#to cutoff
+id_excluded <- sum_Bvisit_nstl %>% 
+  filter(sum_visit <= cutoff) %>% 
+  select(nestid, color) %>% 
+  mutate(excluded=1)
+```
+
+
+#Generate gbi data (this runs a long time)
+```{r}
+#output gmm data by year, plot
+nstl.list <- daytime %>%
+  left_join(select(BD, nest, date, nestid, stageA), by=c("nest", "date")) %>% 
+  filter(stageA=="NSTL") %>% 
+  left_join(id_excluded, by=c("nestid", "color")) %>% 
+  filter(is.na(excluded)) %>% 
+  split(list(.$year, .$plot), drop = T)
+
+lapply(nstl.list, fun_gmm2)
+```
+
+
+```{r}
+#import gmm files, 
+b <- list.files(paste0("../output/data/gmm/NSTL/v",cutoff,"/"))
+
+#generate list with gbi and event
+f <- function(b){
+  a <- readRDS(paste0("../output/data/gmm/NSTL/v",cutoff,"/", b))
+  
+  event <- a$metadata %>% 
+    mutate(date = str_split_fixed(Location, "_", n=3)[,2], 
+         nest = str_split_fixed(Location, "_", n=3)[,1]) %>% 
+    mutate(date = lubridate::mdy(date), 
+           year = as.character(year(date))) %>%
+    mutate(duration_min = (End - Start)/60) %>% #sampling intervals 
+    left_join(nest_list_uni, by = c("nest")) %>%  #add $colony
+    setDT()
+  
+  #only systematic sampling and <2hrs sampling interval
+  position_nstl <- which(event$duration_min <=120)
+  
+  event_select <- event[position_nstl,]
+  gbi <- a$gbi[position_nstl, ]
+  nzindex <- which(colSums(gbi)>0)
+  gbi <- gbi[,nzindex]
+  
+  outputlist <- list("gbi" = gbi, "event" = event_select)
+  return(outputlist)
+}
+
+# make a list for gmm data from all plots, years
+gmm.list <- lapply(b, f)  
+
+# add name to the list
+#names(my_list) <- c(“v”, “m”, “df”)
+
+v_name <- substr(b, 10, 12)
+
+
+names(gmm.list) <- v_name
+
+##output gbi objects[gbi_gmm.list]----
+gbi_gmm.list <- list()
+for(i in 1:length(gmm.list)) {
+    outputname <- paste0("gbi_", names(gmm.list)[i])
+    assign(outputname, gmm.list[[i]][[1]]) #fill in adjacency matrix
+    gbi_gmm.list[[i]] <- gmm.list[[i]][[1]]
+    names(gbi_gmm.list)[i] <- outputname  # name each object
+}
+
+#get adjacency matrix[adjm_gmm.list]----
+adjm_gmm.list <- lapply(gbi_gmm.list, asnipe::get_network, data_format = "GBI", association_index = index)
+
+#id list for birds with no association
+idzero.list <- lapply(gbi_gmm.list, colSums) %>% map(~ names(.[.==0]))
+
+#[adjm_gmm_nonz.list]----
+ adjm_gmm_nonz.list <- list()
+
+ for(i in 1: length(adjm_gmm.list)){
+  adjm_gmm_nonz.list[[i]] <- adjm_gmm.list[[i]][!rownames(adjm_gmm.list[[i]]) %in% idzero.list[[i]], !colnames(adjm_gmm.list[[i]]) %in% idzero.list[[i]]]
+ }
+
+#rename your adjm list
+name_adjm <- paste0("adjm_", substr(names(adjm_gmm.list), 5, 7))
+names(adjm_gmm_nonz.list) <- name_adjm
+names(adjm_gmm.list) <- name_adjm
+
+                  
+#get igraph object
+#[net_gmm.list]----
+net_gmm.list <- lapply(adjm_gmm_nonz.list, igraph::graph.adjacency, mode = "undirected", diag = F, weighted = T) #this include inds with zero association
+
+#rename your net list
+name_net <- paste0("net_", substr(names(net_gmm.list), 6, 8))
+names(net_gmm.list) <- name_net
+```
+
+#save file
+```{r}
+#daytime
+saveRDS(gbi_gmm.list, paste0("../output/data/network/plot/gmm/gbi_D_plot_gmm_NSTL_", index, "_v",cutoff, ".list.RData"))
+saveRDS(net_gmm.list, paste0("../output/data/network/plot/gmm/net_D_plot_gmm_NSTL_", index, "_v",cutoff, ".list.RData"))
+saveRDS(adjm_gmm.list, paste0("../output/data/network/plot/gmm/adjm_D_plot_gmm_NSTL_", index, "_v",cutoff, ".list.RData"))
+```
+
+#Find NSTL groups
+### Generate _dist_ and _community_ objects
+```{r}
+#[dist.list]dist object from association matrix----
+dist.list <- lapply(adjm_gmm_nonz.list, function(x)as.dist(1-x, diag = FALSE, upper = FALSE))
+
+```
+
+### CCC score 
+##### Compare hierarchical clustering methods (this can skip)
+```{r}
+#function to calculate ccc scores
+f_ccc <- function(d){ #d is the dist object
+#Hierarchical clustering
+  hc.c <- hclust(d, method = "complete") 
+  hc.w <- hclust(d, method = "ward.D") 
+  hc.w2 <- hclust(d, method = "ward.D2")
+  hc.s <- hclust(d, method = "single") 
+  hc.a <- hclust(d, method = "average") 
+  
+  #evaluate assocation between clustering results and original association matrix
+  #calculate Cophetic distance(>0.75 means the method is good)
+  coph.c <- cor(cophenetic(hc.c), as.dist(d))
+  coph.w <- cor(cophenetic(hc.w), as.dist(d))
+  coph.w2 <- cor(cophenetic(hc.w2), as.dist(d))
+  coph.s <- cor(cophenetic(hc.s), as.dist(d))
+  coph.a <- cor(cophenetic(hc.a), as.dist(d))
+  #coph.fg <- cor(cophenetic(hc.fg), as.dist(d))
+
+  v <- rbind(coph.c, coph.w, coph.w2, coph.s, coph.a) %>% as.data.frame() %>% setDT(., keep.rownames = "method") %>% rename(CCC=V1) %>% arrange(desc(CCC))
+  
+  return(v)
+}
+```
+
+```{r}
+#[ccc_best.df]choose the best clustering method----
+ccc.list <- lapply(dist.list, f_ccc) 
+ccc.df <- do.call(rbind, ccc.list) %>% rownames_to_column("colony") %>% mutate(colony = substr(colony, 6, 16)) 
+ccc_best.df <- ccc.df %>% group_by(colony) %>% arrange(-CCC) %>%  slice(1) %>% ungroup() 
+print(ccc_best.df)
+```
+## Conclusion: AVERAGE-linkage has the highest score (agree with Whitehead's observation)
+
+
+#find the cutoff point for dendrogram
+#method: optimization of modularity
+```{r}
+#[hca.list]hclust object for average-linkage methods----
+hca.list <- lapply(dist.list, function(x)hclust(x, method = "average")) 
+
+
+#function to calculate $modularity and $n_group for each branch height
+cutoff.list <- list()
+
+for(i in 1:length(hca.list)){
+  hca <- hca.list[[i]]
+  netname <- paste0("net_", substr(names(hca.list)[i], 6, 8))
+  net <- net_gmm.list[[netname]]
+  height <- hca$height  #branch height
+  
+  n_group <- vector() #number of groups
+  mod <- vector() #modularity
+  association <- vector()
+  
+  for(j in 1:length(height)){
+    grp <- cutree(hca, h = height[j]) #group membership
+  
+    a <- max(grp) #number of groups
+    b <- modularity(net, membership = grp, weights = E(net)$weight) #modularity
+  
+    n_group[j] <- a
+    mod[j] <- b
+    association[j] <- 1-height[j]
+    
+  }  #end of j loop
+  
+  cutoff.list[[i]] <- data.frame(n_group, mod, association) %>% mutate(net = netname) %>% mutate(diff_mod = round(lead(mod)-mod, 4), diff_asso = round(lead(association)-association, 4))
+} #end of i loop
+
+#[cutoff.df]----
+cutoff.df <- rbindlist(cutoff.list) %>% 
+  mutate(year = paste0("20", substr(net, 5, 6)), 
+         plot = substr(net, 7, 7)) %>% 
+  mutate(plot = dplyr::recode(plot, "M" = "MSTO", "S" = "SPRA", "L" = "LLOD")) %>% 
+  mutate(mod = round(mod, digits = 3), association = round(association, digits = 3))
+
+#[cutoff.df.l]----
+#gather modularity and association
+cutoff.df.l <- cutoff.df %>% 
+  gather(., key = "measure", value = "value", c("mod", "association")) %>% 
+  gather(., key = "delta_measure", value = "delta", c("diff_mod", "diff_asso"))
+
+#[max_mod]maximum modularity----
+#this has not filtered out the assocation below random
+#this has not filtered only "colony members"
+#because these data include random visitors, some of modularities are very low
+max_mod <- cutoff.df %>% 
+  select(-diff_mod, -diff_asso) %>% 
+  distinct() %>% 
+  group_by(net) %>% 
+  slice(which(mod == max(mod))) %>% #select the cutoff with highest modularity
+  mutate(mod = round(mod, 5)) %>% 
+  group_by(net) %>% 
+  mutate(n = sum(n())) %>% 
+  filter(n_group == max(n_group)) %>% #choose the max number of groups in the case where there are more than two cutoff with the highest modularity
+  setDT()
+
+#write_xlsx(max_mod, paste0("../output/cluster analysis/data/max_modularity_hc_gmm_all_D_", group_type, "_v", cutoff, "_", group_type, ".xlsx"))
+```
+
+
+## output group membership from hierarchical clustering
+```{r}
+#function to generate group membership
+group_hca.list <- list()
+
+for(i in 1:length(hca.list)){
+  hca <- hca.list[[i]]
+  netname <- paste0("net_", substr(names(hca.list)[i], 6, 8))
+  v_year <- paste0("20", substr(netname, 5,6))
+  v_plot <- substr(netname, 7, 7)
+
+  grp <- cutree(hca, k = max_mod[net==netname]$n_group) #or k= (number of groups) as opposed to h
+  group_hc <- reshape2::melt(grp, value.name = "group") %>% 
+    rownames_to_column("color") %>% 
+    arrange(group) %>% 
+    mutate(net = netname, 
+           year = v_year, 
+           plot = v_plot, 
+           groupid = paste0(substr(v_year, 3, 4), substr(v_plot, 1, 1), g_type2, "g", group, subgroup))
+  
+  group_hca.list[[i]] <- group_hc  #group member list
+} 
+
+#[group_member_hc]output group members from hierarchical clustering----
+group_member_hc <- rbindlist(group_hca.list) %>% mutate(gtype = g_type) %>% mutate(plot = recode(plot, "M" = "MSTO", "S" = "SPRA","L" = "LLOD"))
+```
+
+```{r}
+saveRDS(group_member_hc, paste0("../output/cluster analysis/data/plot/2013-2017 weaver groups_D_plot_NSTL_v",cutoff,"_hc", ".RData"))
+
+write_xlsx(group_member_hc, paste0("../output/cluster analysis/data/plot/2013-2017 weaver groups_D_plot_NSTL_v",cutoff,"_hc", ".xlsx"))
+```
+
+#output membership object (working, but undone for all)
+```{r}
+f_hcmem <- function(data){
+  d <- split(data["color"], data$group)
+  output <- lapply(d, dplyr::pull)
+  return(output)
+}
+
+mem.list <- group_member_hc %>% 
+  select(net, group, color) %>% 
+  split(list(.$net), drop = T) %>% 
+  map(., f_hcmem)
+
+```
+

@@ -1,0 +1,459 @@
+---
+title: "Chap1 kin nw"
+output: html_document
+```{r}
+setwd("/Users/pranavsuresh/Code/WeaverYIRU20210811")
+```
+---
+
+```{r}
+#Import this and save all the process
+# degree_KDNB <- read_xlsx("../output/kin network/output_degree network_KDNB_cm.xlsx") %>% setDT()
+degree_KDNB <- read_xlsx("../output/kin network/output_degree network_KDNB_all.xlsx") %>% setDT()
+```
+
+```{r}
+#[kinet.p]
+#[degree_kin]
+```
+
+
+
+#------Kin nw by PLOT--------#
+##first order
+```{r}
+#[kinet.p]----
+#only first order
+f <- function(x){
+  node <- data.frame(node = x$color) %>% mutate(sex = fun_sex(x$color, sex)) %>% arrange(node)
+  
+  edgelist <- as.data.frame.matrix(t(combn(node$node, 2))) %>% 
+    mutate(kinorder = fun_kinship(., kinship, "kinorder"), 
+           kinorder2 = fun_kinship(., kinship, "kinorder2")) %>% 
+    rename(id1=V1, id2=V2) %>% 
+    filter(kinorder=="first")
+  
+  net <- graph.data.frame(d = edgelist, vertices = node, directed = F)
+  return(net)
+  }
+
+#All birds
+kinet.p <- data %>% 
+  filter(color!="MYPO") %>% 
+  select(year, plot, color) %>% 
+  distinct() %>% 
+  left_join(select(age, year, color, age), by=c("color", "year")) %>% 
+  filter(age!="IM") %>% 
+  split(list(.$year, .$plot), drop = T) %>% 
+  map(., f)
+
+#change list names 
+for(i in 1:length(kinet.p)) {
+    outputname <- paste0("net_", substr(names(kinet.p)[i], 3, 4), substr(names(kinet.p)[i], 6, 6)) #eg. adjm_15L
+    names(kinet.p)[i] <- outputname  # name each object
+}
+
+#output kin net
+#saveRDS(kinet.p, "../output/kin network/data/net_kinship_all.list.RData")
+```
+
+### plot kin network by plot
+```{r}
+#with labels
+for(i in 1:length(kinet.p)){
+   name = paste0("kinship,", names(kinet.p[i]))
+  ggsave(paste0("../output/kin network/fig/colony_member/labels/plot/", name, ".png"), fun_plotkin(kinet.p[[i]],    netname = name, "kinorder2"), width = 6, height = 6)
+}
+
+#without labels
+for(i in 1:length(kinet.p)){
+   name = paste0("kinship,", names(kinet.p[i]))
+  ggsave(paste0("../output/kin network/fig/colony_member/no label/plot/", name, ".png"), fun_plotkin(kinet.p[[i]], netname = name, "kinorder2", vname = "n"), width = 6, height = 6)
+}
+
+```
+
+##first and second order
+```{r}
+#[kinet2.p]----
+#only first order
+f12 <- function(x){
+  node <- data.frame(node = x$color) %>% mutate(sex = fun_sex(x$color, sex)) %>% arrange(node)
+  
+  edgelist <- as.data.frame.matrix(t(combn(node$node, 2))) %>% 
+    mutate(kinorder = fun_kinship(., kinship, "kinorder"), 
+           kinorder2 = fun_kinship(., kinship, "kinorder2")) %>% 
+    rename(id1=V1, id2=V2) %>% 
+    filter(kinorder=="first" | kinorder == "second")
+  
+  net <- graph.data.frame(d = edgelist, vertices = node, directed = F)
+  return(net)
+  }
+
+#All birds
+kinet2.p <- data %>% 
+  filter(color!="MYPO") %>% 
+  select(year, plot, color) %>% 
+  distinct() %>% 
+  left_join(select(age, year, color, age), by=c("color", "year")) %>% 
+  filter(age!="IM") %>% 
+  split(list(.$year, .$plot), drop = T) %>% 
+  map(., f12)
+
+#change list names 
+for(i in 1:length(kinet2.p)) {
+    outputname <- paste0("net_", substr(names(kinet2.p)[i], 3, 4), substr(names(kinet2.p)[i], 6, 6)) #eg. adjm_15L
+    names(kinet2.p)[i] <- outputname  # name each object
+}
+
+#output kin net
+#saveRDS(kinet2.p, "../output/kin network/data/net_kinship12_all.list.RData")
+```
+
+#Q:What is the size of kin network?
+```{r}
+f3 <- function(net){
+  data <- data.frame(dg_first = degree(net)) %>% rownames_to_column(., "color")
+  return(data)
+}
+
+#[degree_kin12]----
+degree_kin12 <- kinet2.p %>% map(., f3) %>% rbindlist(., idcol = "net") %>% 
+  rename(dg_firstsecond = dg_first) %>% 
+  setDT()
+
+#[degree_kin]----
+degree_kin <- kinet.p %>% map(., f3) %>% rbindlist(., idcol = "net") %>% 
+  left_join(degree_kin12, by=c("net", "color")) %>% 
+  mutate(dg_second = dg_firstsecond - dg_first) %>% 
+  mutate(sex = fun_sex(.$color, sex), 
+         year = paste0("20", substr(net, 5, 6)), 
+         plot = substr(net, 7, 7)) %>% 
+  mutate(plot = recode(plot, "M"="MSTO", "S"="SPRA", "L"="LLOD")) %>% 
+  left_join(select(age, color, year, age), by=c("color", "year")) %>% 
+  setDT()
+
+```
+
+#Summary of kin nw by sex
+```{r}
+#sample size
+degree_kin %>% select(color, sex) %>% distinct() %>% group_by(sex) %>% summarise(n=n())
+
+#summary
+sum_dg_kin_bysex <- degree_kin %>% 
+  group_by(sex) %>% 
+  summarise(mean_dg1 = mean(dg_first), sd_dg1 = sd(dg_first), 
+            mean_dg2 = mean(dg_second), sd_dg2 = sd(dg_second), 
+            mean_dg12 = mean(dg_firstsecond), sd_dg12 = sd(dg_firstsecond))
+
+sum_dg_kin_bysexsite <- degree_kin %>% 
+  group_by(plot, sex) %>% 
+  summarise(mean_dg1 = mean(dg_first), sd_dg1 = sd(dg_first),
+            mean_dg2 = mean(dg_second), sd_dg2 = sd(dg_second), 
+            mean_dg12 = mean(dg_firstsecond), sd_dg12 = sd(dg_firstsecond))
+
+sum_dg_kin_bysexsiteyear <- degree_kin %>% 
+  group_by(year, plot, sex) %>% 
+  summarise(mean_dg1 = mean(dg_first), sd_dg1 = sd(dg_first), 
+            mean_dg2 = mean(dg_second), sd_dg2 = sd(dg_second), 
+            mean_dg12 = mean(dg_firstsecond), sd_dg12 = sd(dg_firstsecond))
+```
+
+```{r}
+write_xlsx(sum_dg_kin_bysex, "../output/kin network/output_sum_dg_kin_bysex_all.xlsx")
+write_xlsx(sum_dg_kin_bysexsite, "../output/kin network/output_sum_dg_kin_bysexsite_all.xlsx")
+write_xlsx(sum_dg_kin_bysexsiteyear, "../output/kin network/output_sum_dg_kin_bysexsiteyear_all.xlsx")
+```
+
+
+
+#Degree of sleeping nw
+```{r}
+f4 <- function(net){
+  data <- data.frame(dg_N = degree(net), 
+                     betw_N = betweenness(net),
+                     dgw_N = graph.strength(net),
+                     subc_N = subgraph_centrality(net)) %>% rownames_to_column(., "color")
+  
+  return(data)
+}
+
+#[degree_N]----
+degree_N <- Nnet.pssa %>% map(., f4) %>% rbindlist(., idcol = "net") %>% 
+  mutate(sex = fun_sex(.$color, sex), 
+         year = paste0("20", substr(net, 5, 6)), 
+         plot = substr(net, 7, 7)) %>% 
+  mutate(plot = recode(plot, "M"="MSTO", "S"="SPRA", "L"="LLOD")) %>% 
+  filter(color!="MYPO") %>% 
+  setDT()
+
+```
+
+```{r}
+f4.2 <- function(net){
+  edgelist <- as.data.frame.matrix(get.edgelist(net)) %>% 
+    mutate(kinorder = fun_kinship(., kinship, "kinorder"), 
+           kinorder2 = fun_kinship(., kinship, "kinorder2")) %>% 
+    rename(id1=V1, id2=V2) %>% 
+    filter(kinorder=="first") %>% 
+    select(id1, id2) %>% 
+    as.matrix()
+  
+  net2 <- graph.edgelist(edgelist)
+
+  data <- data.frame(dg_N_first = degree(net2)) %>% rownames_to_column(., "color")
+  
+  return(data)
+}
+
+#[degree_N_firt]----
+degree_N_first <- Nnet.pssa %>% map(., f4.2) %>% rbindlist(., idcol = "net") %>% 
+  mutate(sex = fun_sex(.$color, sex), 
+         year = paste0("20", substr(net, 5, 6)), 
+         plot = substr(net, 7, 7)) %>% 
+  mutate(plot = recode(plot, "M"="MSTO", "S"="SPRA", "L"="LLOD")) %>% 
+  filter(color!="MYPO") %>% 
+  setDT()
+```
+
+#degree of Daytime networks
+```{r}
+f4.3 <- function(net){
+  data <- data.frame(dg_D = degree(net), 
+                     betw_D = betweenness(net), 
+                     dgw_D = strength(net)) %>% rownames_to_column(., "color")
+  return(data)
+}
+
+degree_D <- Dnet.pssa %>% map(., f4.3) %>% rbindlist(., idcol = "net") %>% 
+  mutate(sex = fun_sex(.$color, sex), 
+         year = paste0("20", substr(net, 5, 6)), 
+         plot = substr(net, 7, 7)) %>% 
+  mutate(plot = recode(plot, "M"="MSTO", "S"="SPRA", "L"="LLOD")) %>% 
+  filter(color!="MYPO") %>% 
+  setDT()
+
+```
+
+#degree of breeding network
+```{r}
+f5 <- function(net){
+  data <- data.frame(dg_B = degree(net),
+                     betw_B = betweenness(net)) %>% rownames_to_column(., "color")
+  return(data)
+}
+
+#[degree_B]----
+degree_B <- Bnet.p %>% map(., f5) %>% rbindlist(., idcol = "net") %>% 
+  mutate(sex = fun_sex(.$color, sex), 
+         year = paste0("20", substr(net, 5, 6)), 
+         plot = substr(net, 7, 7)) %>% 
+  mutate(plot = recode(plot, "M"="MSTO", "S"="SPRA", "L"="LLOD")) %>% 
+  filter(color!="MYPO") %>% 
+  setDT()
+
+#[degree_KDNB]----
+degree_KDNB <- degree_kin %>% 
+  left_join(select(degree_D, year, plot, color, dg_D, betw_D, dgw_D), 
+            by=c("year", "plot", "color")) %>% 
+  left_join(select(degree_B, year, plot, color, dg_B, betw_B), 
+            by=c("year", "plot", "color")) %>% 
+  left_join(select(degree_N, year, plot, color, dg_N, betw_N, dgw_N, subc_N), 
+            by=c("year", "plot", "color")) %>%
+  left_join(select(degree_N_first, year, plot, color, dg_N_first), 
+            by=c("year", "plot", "color")) %>%
+  replace(is.na(.), 0) %>% setDT()
+
+
+  
+```
+
+```{r}
+write_xlsx(degree_KDNB, "../output/kin network/output_degree network_KDNB_all.xlsx")
+```
+
+#plot
+```{r}
+#---------------breeding vs. kin nw
+ggscatter(degree_KDNB, x = "dg_first", y = "dg_B", facet.by = c("sex", "year"),
+          size = 1, 
+          add = "reg.line", conf.int = T, 
+          xlab = "Degree in kin networks", 
+          ylab = "Degree in breeding networks") +
+    stat_cor(method = "pearson", label.x.npc = 0.2, size=2.5)+
+    ggtitle("breeding vs. kin network") +
+  geom_count()
+
+ggsave("../output/kin network/fig/fig_B and kin nw_sexyear_cm.png", width = 7, height=4)
+
+# #------------------breeding vs. sleeping nw
+# ggscatter(degree_KDNB, x = "dg_N", y = "dg_B", facet.by = c("sex", "year"),
+#           size = 1, xticks.by=2,
+#           add = "reg.line", conf.int = T, 
+#           xlab = "Degree in sleeping networks", 
+#           ylab = "Degree in breeding networks") +
+#     stat_cor(method = "pearson", label.x.npc = 0.1, size=2.5)+
+#     ggtitle("breeding vs. sleeping network") +
+#   geom_count()
+# 
+# ggsave("../output/kin network/fig/fig_B and N nw_sexyear_cm.png", width = 7, height=4)
+
+#---------kin vs. sleeping
+ggscatter(degree_KDNB, x = "dg_first", y = "dg_N", facet.by = c("sex","year"),
+          size = 1, xticks.by = 2,
+          add = "reg.line", conf.int = T, 
+          xlab = "Degree in kin networks", 
+          ylab = "Degree in sleeping networks") +
+    stat_cor(method = "pearson", label.x.npc = 0.1, size=2.5)+
+    ggtitle("sleeping network vs. kin network") +
+  geom_count()
+
+ggsave("../output/kin network/fig/fig_N and kin nw_sexyear_cm.png", width = 7, height=4)
+
+#---------kin vs. sleeping first
+ggscatter(degree_KDNB, x = "dg_first", y = "dg_N_first", facet.by = c("sex","year"),
+          size = 1, xticks.by = 2,
+          add = "reg.line", conf.int = T, 
+          xlab = "Degree in kin networks", 
+          ylab = "Degree in sleeping networks") +
+    stat_cor(method = "pearson", label.x.npc = 0.1, size=2.5)+
+    ggtitle("sleeping network vs. kin network") +
+  geom_count()
+
+ggsave("../output/kin network/fig/fig_N_first and kin nw_sexyear_cm.png", width = 7, height=4)
+
+
+#--------------breeding and sleeping with first
+ggscatter(degree_KDNB, x = "dg_N_first", y = "dg_B", facet.by = c("sex","year"),
+          size = 1, xticks.by = 2,
+          add = "reg.line", conf.int = T, 
+          xlab = "Degree in sleeping networks (first)", 
+          ylab = "Degree in breeding networks") +
+    stat_cor(method = "pearson", label.x.npc = 0.1, size=2.5)+
+    ggtitle("sleeping network vs. breeding network") +
+  geom_count()
+
+ggsave("../output/kin network/fig/fig_N_first and B_sexyear_cm.png", width = 7, height=4)
+```
+
+#pre-modeling tidy
+```{r}
+degree_KDNB$sex <- factor(degree_KDNB$sex)
+degree_KDNB$year <- factor(degree_KDNB$year)
+```
+
+#Do males have larger kin nw
+#GLMER 
+```{r}
+library(glmmTMB)
+source("overdisp_fun.R")
+
+#full model, first and second order----
+fit <- glmmTMB(dg_firstsecond ~ sex*plot + (1|year) + (1|color), family = poisson,  data=degree_kin)
+
+#diagnostic: ok
+overdisp_fun(fit)  #no overdispersion
+resd <- DHARMa::simulateResiduals(fit)  #simulation output
+plot(resd)
+
+summary(fit)
+glmmTMB:::Anova.glmmTMB(fit)
+
+emm.fit <- emmeans(fit, pairwise ~ sex*plot, type = "response")
+plot(emm.fit)
+
+#----first order----
+fit1 <- glmmTMB(dg_first ~ sex*plot + (1|year) + (1|color), family = poisson, ziformula = ~ 1,  data=degree_kin)
+
+#diagnostic: ok
+resd <- DHARMa::simulateResiduals(fit1)  #simulation output
+plot(resd)
+
+summary(fit1)
+glmmTMB:::Anova.glmmTMB(fit1)
+
+emm.fit1 <- emmeans(fit1, pairwise ~ sex*plot, type = "response")
+plot(emm.fit1)
+```
+#------------END of Kin network by PLOT-----------#
+
+#-------------kin network by COLONY------------#
+```{r}
+#[kinet.c]----
+kinet.c <- colony_member %>% 
+  filter(colony!="SPRA51" & colony!="SPRA24" & color!="MYPO") %>% #only 1bird
+  select(year, plot, colony, color) %>% 
+  distinct() %>% 
+  split(list(.$year, .$colony), drop = T) %>% 
+  map(., f)
+
+#saveRDS(kinet.c, "../output/kin network/data/net_kinship_colony_cm.list.RData")
+```
+
+#Summary of kin nw by colony
+```{r}
+#[degree_kin_c]----
+degree_kin_c <- kinet.c %>% map(., f3) %>% rbindlist(., idcol = "net") %>% 
+  mutate(sex = fun_sex(.$color, sex), 
+         year = substr(net, 1, 4), 
+         plot = substr(net, 6, 9), 
+         colony = substr(net, 6, 11)) %>%
+  add_count(net) %>% 
+  filter(color!="MYPO") %>% 
+  setDT()
+
+#degree first by colony
+sum_degree_kin_c <- degree_kin_c %>% 
+  group_by(year, plot, colony) %>% 
+  summarise(mean_dg1 = mean(dg_first), sd_dg1 = sd(dg_first))
+
+#average over all colonies
+sum_degree_kin_c_all <- degree_kin_c %>% 
+  summarise(mean_dg1 = mean(dg_first), sd_dg1 = sd(dg_first))
+```
+
+
+### plot kin network at colony levels
+```{r}
+#with labels
+for(i in 1:length(kinet.c)){
+   name = paste0("kinship,", names(kinet.c[i]))
+  ggsave(paste0("../output/kin network/fig/colony_member/labels/colony/", name, ".png"), fun_plotkin(kinet.c[[i]],    netname = name, "kinorder2"), width = 6, height = 6)
+}
+
+#without labels
+for(i in 1:length(kinet.c)){
+   name = paste0("kinship,", names(kinet.c[i]))
+  ggsave(paste0("../output/kin network/fig/colony_member/no label/colony/", name, ".png"), fun_plotkin(kinet.c[[i]], netname = name, "kinorder2", vname = "n"), width = 6, height = 6)
+}
+```
+
+#-----------Network analysis--------------#
+```{r}
+Dnet.p
+```
+
+```{r}
+library(readxl)
+library(writexl)
+library(data.table)
+library(dplyr)
+library(purrr)
+library(tibble)
+library(igraph)
+library(stringr)
+library(ggplot2)
+library(ggpubr)
+library(forcats)
+library(glmmTMB)
+library(DHARMa)
+library(emmeans)
+library(car)
+
+find("ggscatter")
+
+```
+
+```{r}
+class(data)

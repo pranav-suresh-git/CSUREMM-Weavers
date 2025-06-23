@@ -1,0 +1,129 @@
+---
+title: "Chap2 analysis_dynamics"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(glmmTMB)
+library(performance)
+```
+
+
+#Individual level analysis
+#TIDY data
+```{r}
+#across and within plot
+#[cm_ind_l]----
+#n=840
+cm_ind_l <- colony_member_AF %>% 
+  filter(year != "2017") %>% 
+  select(plot, color, year, colony, age, sex) %>% 
+  rename(period_t0 = year, plot_t0 = plot, colony_t0 = colony, age_t0 = age) %>% 
+  mutate(period_t1 = period_t0) %>% 
+  mutate(period_t1 = recode(period_t0, "2013"="2014", "2014"="2015", "2015"="2016", "2016"="2017")) %>% 
+  mutate(period = recode(period_t0, "2013"="y34", "2014"="y45", "2015"="y56", "2016"="y67")) %>% 
+  left_join(select(colony_member_AF, year, plot, color, colony, age), by = c("period_t1" = "year", "color")) %>% 
+  rename(plot_t1 = plot, colony_t1 = colony, age_t1 = age) %>% 
+  select(color, period, plot_t0, plot_t1, period_t0, period_t1, sex, age_t0, age_t1, colony_t0, colony_t1) %>% 
+  mutate(move01 = ifelse(colony_t0 == colony_t1, 0, 1)) %>% # $move01: move or not
+  mutate(move_site = ifelse(plot_t0 == plot_t1, 0, 1)) %>% 
+  setDT() %>% 
+  #add moving distance
+  mutate(move_dist = 
+           fun_weight(.[, .(colony_t1, colony_t0)], colony_dist, "dist_m")) %>% 
+  
+  #add colony status
+  left_join(select(colony_status, colony_t0, period_t0, colony_status_RD, FF_colony), 
+            by = c("period_t0", "colony_t0")) %>% 
+
+  #add disturbance info
+  left_join(select(disturbance, colony, period, disturbance01), 
+            by = c("colony_t0" = "colony", "period"))  %>% 
+  mutate(disturbance01 = replace_na(disturbance01, 0)) %>% 
+  left_join(rainfall_period_z, by = c("period_t0", "period_t1")) %>% #add $rainfall
+  setDT()
+
+#[cm_ind_lnna_w]----  
+#movement events WITHIN plot, only inds in both years 
+cm_ind_lnna_w <- cm_ind_l %>%
+  filter(plot_t0 == plot_t1) %>% 
+  filter(!is.na(move01)) %>% 
+  setDT()
+```
+
+#Quantify individual movement: % of inds
+```{r}
+#how many birds move to different colony trees?
+#[sum_n_period]by period----
+sum_n_period <- cm_ind_lnna %>% 
+  count(period, move01) %>% 
+  group_by(period) %>% 
+  mutate(sum = sum(n), per = round(n/sum, digits = 3)) %>% 
+  setDT()
+
+#mean and SD for $per
+#this doesn't not count for missing birds. would be higher if counted
+mean(sum_n_period[move01==1]$per)  #0.69
+sd(sum_n_period[move01==1]$per)    #0.22
+
+#[sum_n_periodplot]period X plot----
+#WITHIN PLOTS
+sum_n_periodplot <- cm_ind_lnna_w %>% 
+  count(period,  plot_t0, move01) %>% 
+  group_by(period, plot_t0) %>% 
+  mutate(sum = sum(n), per = round(n/sum, digits = 3)) %>% 
+  setDT()
+
+#WITHING PLOTS
+#$only adults------
+sum_n_period_a <- cm_ind_lnna_w %>% 
+  filter(age_t1=="A") %>% 
+  count(period, move01) %>% 
+  group_by(period) %>% 
+  mutate(sum = sum(n), per = round(n/sum, digits = 3)) %>% 
+  setDT()
+
+mean(sum_n_period_a[move01==1]$per)  #0.7
+sd(sum_n_period_a[move01==0]$per)    #0.19
+
+```
+
+#Ind. movement; AGE
+```{r}
+#
+fit <- glmmTMB(move01 ~ sex + shortrain_z + longrain_z + (1|color), family = binomial(link = "logit"), data = cm_ind_lnna_w[age_t1=="Y"]) 
+
+summary(fit)
+plot_model(fit, "int")
+
+#only adults, non-disturbed trees
+fit <- glmmTMB(move01 ~ sex + shortrain_z + longrain_z + (1|color), family = binomial(link = "logit"), data = cm_ind_lnna_w[age_t1=="A" & disturbance01==0]) 
+
+#only yearling, non-disturbed trees
+fit <- glmmTMB(move01 ~ age_t1*sex + (1|color) + (1|plot_t0), family = binomial(link = "logit"), data = cm_ind_lnna_w)  
+
+performance::check_collinearity(fit)
+summary(fit)
+```
+
+#Stat test for FFD at colony level
+```{r}
+#chi-square test
+library(chisq.posthoc.test) 
+
+#dissovled vs. remained
+chisq.test(t0_period_t)
+chisq.test(t0_period_per_t)
+
+#FFD
+chisq.test(t_period_FF) #p=0.1
+chisq.test(t_period_FF_per) #p<0.01
+
+chisq.posthoc.test(t_period_FF)
+chisq.posthoc.test(t_period_FF_per)
+```
+

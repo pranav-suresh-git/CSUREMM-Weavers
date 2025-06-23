@@ -1,0 +1,540 @@
+#title: "Chap1 analysis r and association"
+
+```{r}
+library(dplyr)
+```
+
+
+## convert assocation matrix to dataframe
+## Tidy your data
+##this includes all combo for the plot, only from systematic sampling
+```{r}
+#convert matrix to dataframe
+f_mtod <- function(x){
+  d <- x %>% 
+  modify_if(., upper.tri(., diag = F), ~ NA) %>%  #include diagonal (F)
+    reshape2::melt(., na.rm = T) %>% 
+    rename(id1 = Var1, id2 = Var2, association = value) %>%
+    mutate(id1 = as.character(id1), id2 = as.character(id2)) 
+  return(d)
+}
+```
+
+```{r}
+df_D <- lapply(Dadjm.pssa, f_mtod) %>% rbindlist(., idcol = "list") %>% mutate(gtype="daytime")
+df_N <- lapply(Nadjm.pssa, f_mtod) %>% rbindlist(., idcol = "list") %>% mutate(gtype="sleeping")
+df_B <- lapply(Badjm.p, f_mtod) %>% rbindlist(., idcol = "list") %>% mutate(gtype="breeding")
+
+```
+
+#tidy data
+```{r}
+#[df0]----
+#contain diagonal
+#this contains assocations year X plot X gtype
+df0 <- rbind(df_D, df_N, df_B) %>%  
+  filter(id1 != "MYPO" & id2 != "MYPO") %>% #delete ind with no genetic data, n=131497
+  mutate(id12 = paste0(id1, id2)) %>% 
+  mutate(year = paste0("20", substr(list, 6, 7)), 
+         plot = if_else(str_detect(list, "M"), "MSTO", 
+                  if_else(str_detect(list, "L"), "LLOD", "SPRA"))) %>% 
+  select(-list) %>% 
+  mutate(V1sex = fun_sexdyad(., sex)[[1]], 
+           V2sex = fun_sexdyad(., sex)[[2]],
+           V12sex = fun_sexdyad(., sex)[[3]]) %>% 
+  mutate(mat1.m = ifelse(V12sex=="mm", 1, 0)) %>% #mm:10, ff:01, mf:00
+  mutate(mat2.f = ifelse(V12sex=="ff", 1, 0)) %>% 
+  mutate(r = fun_r(., relate[, r:= wang])) %>% #add $r
+  mutate(r = ifelse(id1==id2, 1, r)) %>% 
+  mutate(kin_final = fun_kinship(., kinship, "kin_final"),  #get $kinship 
+         kin_kg = fun_kinship(., kinship, "kin_kg"), 
+         kin_kg2 = fun_kinship(., kinship, "kin_kg2"),
+         kinorder = fun_kinship(., kinship, "kinorder"), 
+         kinorder2 = fun_kinship(., kinship, "kinorder2"),
+         UR = fun_kinship(., kinship, "UR12")) %>% 
+  left_join(select(pair, year, plot, V1, V2, pair), by=c("year", "plot","id1"="V1", "id2"="V2")) %>%   #add pair, one id could have two pairs!
+  mutate(pair = replace(pair, is.na(pair), 0)) %>% 
+  left_join(select(colony_member_main1, year, plot,  color, colony), 
+            by = c("year", "plot", "id1" = "color")) %>% 
+  rename(id1_colony = colony ) %>% 
+  left_join(select(colony_member_main1, year, plot, color, colony), 
+            by = c("year", "plot", "id2" = "color")) %>% 
+  rename(id2_colony = colony) %>% 
+  mutate(samecolony = ifelse(id1_colony == id2_colony, 1, 0)) %>% 
+  mutate(samecolony = replace_na(samecolony, 0))  #assume not in the same colony if no colony membership for the bird
+
+```
+
+
+#some function
+```{r}
+#convert data to $AI.m
+faso <-  function(data){
+ x <- data %>% 
+    dplyr::select(id1, id2, association) %>% 
+    spread(key = id2, value = association, fill = 0) %>% 
+    column_to_rownames(., var = "id1") %>% 
+    as.matrix()
+ x2 <- x + t(x)
+ return(x2)
+}
+
+
+#convert data to $r.m
+fr <- function(data){
+  x <- data %>% 
+    dplyr::select(id1, id2, r) %>% 
+    spread(key = id2, value = r, fill = 0) %>% 
+    column_to_rownames(., var = "id1") %>% 
+    as.matrix()
+  x2 <- x + t(x)
+  diag(x2) <- 1
+  return(x2)
+}
+
+#convert data to $sex1.m, $sex2.m
+#mm:10, mf:11, ff:01
+fsex1 <- function(data){
+  x <- data %>% 
+    dplyr::select(id1, id2, mat1.m) %>% 
+    spread(key = id2, value = mat1.m, fill = 0) %>% 
+    column_to_rownames(., var = "id1") %>% 
+    as.matrix()
+  x2 <- x + t(x)
+  diag(x2) <- 1
+  return(x2)
+}
+
+fsex2 <- function(data){
+  x <- data %>% 
+    dplyr::select(id1, id2, mat2.f) %>% 
+    spread(key = id2, value = mat2.f, fill = 0) %>% 
+    column_to_rownames(., var = "id1") %>% 
+    as.matrix()
+  x2 <- x + t(x)
+  diag(x2) <- 1
+  return(x2)
+}
+
+#convert data to $pair.m
+fpair <- function(data){
+  x <- data %>% 
+    dplyr::select(id1, id2, pair) %>% 
+    spread(key = id2, value = pair, fill = 0) %>% 
+    column_to_rownames(., var = "id1") %>% 
+    as.matrix()
+  x2 <- x + t(x)
+  diag(x2) <- 1
+  return(x2)
+}
+
+#convert data to $colony.m
+fcolony <- function(data){
+  x <- data %>% 
+    dplyr::select(id1, id2, samecolony) %>% 
+    spread(key = id2, value = samecolony, fill = 0) %>% 
+    column_to_rownames(., var = "id1") %>% 
+    as.matrix()
+  x2 <- x + t(x)
+  diag(x2) <- 1
+  return(x2)
+}
+```
+
+##Into nested data mode
+```{r}
+#[df_nested]----
+df_nested <- df0 %>%
+  group_by(year, plot, gtype) %>% 
+  nest() %>% 
+  mutate(AI.m = map(data, faso), #add $AI.m, $data is a list-column now
+         r.m = map(data, fr), 
+         sexm.m = map(data, fsex1),
+         sexf.m = map(data, fsex2),
+         pair.m = map(data, fpair),
+         colony.m = map(data, fcolony))  #add $r.m
+
+#check matrix before running test
+isSymmetric(df_nested$AI.m[[1]])
+
+#saveRDS(df_nested, "../output/r and association/data/df_nested_SS_all.rdata")
+```
+ˇˇ
+#MRQAP test
+```{r}
+#create function
+f_mantel.r3 <- function(AI.m, r.m, pair.m, colony.m){
+  asnipe::mrqap.dsp(AI.m ~ r.m + pair.m + colony.m,  intercept = T, directed = "undirected",
+diagonal = F, test.statistic = "t-value", tol = 1e-07, randomisations = 1000)
+}
+
+#Run MRQAP (took a long time)
+df_nested3 <- df_nested %>% 
+  mutate(mantel.r3 = pmap(list(AI.m, r.m, pair.m, colony.m), f_mantel.r3)) #run parallel map on list-columns
+
+#saveRDS(df_nested3, "../output/r and association/data/output_mantel_r3.rdata")
+```
+
+#SKIP above and read the data set directly
+#read output
+```{r}
+df_nested3 <- readRDS("../output/r and association/data/output_mantel_r3.rdata") %>% setDT()
+
+#add model results (estimates, pvalue)----
+df_nested3 <- df_nested3 %>% 
+  mutate(n_birds = map(AI.m, function(x)(dim(x)[[1]]))) %>% 
+  mutate(coef.r3 = map(mantel.r3, function(x)(x$"coefficients"[2]))) %>% 
+  mutate(pvalue.r3 = map(mantel.r3, function(x)(x$"P.values"[["r.m"]]))) %>% 
+  mutate(coef.pair.r3 = map(mantel.r3, function(x)(x$"coefficients"[3]))) %>% 
+  mutate(pvalue.pair.r3 = map(mantel.r3, function(x)(x$"P.values"[["pair.m"]]))) %>% 
+  mutate(coef.colony.r3 = map(mantel.r3, function(x)(x$"coefficients"[4]))) %>% 
+  mutate(pvalue.colony.r3 = map(mantel.r3, function(x)(x$"P.values"[["colony.m"]]))) 
+
+
+#unnest data
+output.r3 <- df_nested3 %>% 
+  select(year, plot, gtype, n_birds, coef.r3, pvalue.r3, coef.pair.r3, pvalue.pair.r3, coef.colony.r3, pvalue.colony.r3) %>% 
+  unnest(cols= c(n_birds, coef.r3, pvalue.r3, coef.pair.r3, pvalue.pair.r3, coef.colony.r3, pvalue.colony.r3))
+
+#saveRDS(df_nested3, paste0("../output/r and association/data/df_nested_AI and r3_SS_all.rdata"))
+#write_xlsx(output.r3, paste0("../output/r and association/data/output_QAP_AI and r3_SS_all.xlsx"))
+```
+
+#Meta-analysis
+```{r}
+library(metafor) # for metanalysis. 
+library(igraph)
+library(asnipe) # for lm on matrices
+library(lme4)
+library(car)
+library(ggpubr) # for plotting correlations
+library(Hmisc) # for multiple correlation 
+library(car) # for collinearity
+library(reshape2) # for melting matrices
+library(lattice)
+```
+
+#import data
+```{r}
+df_nested3 <- readRDS("../output/r and association/data/df_nested_AI and r3_SS_all.rdata")
+```
+
+
+
+##FUNCTION TO Get EFFECT SIZE
+```{r}
+# code for extracting r-squared and adjusted r-squared for the netlm 
+# (adopted from Adriana)
+adj.rsq <- function(x){
+    
+    mss <- sum((fitted(x) - mean(fitted(x)))^2)
+    
+    qn <- x$n
+    df.int <- 1
+    rdf <- qn - x$rank
+    rss <- sum(resid(x)^2)
+    resvar <- rss/rdf
+    
+    r.squared <- mss/(mss + rss)
+    adj.r.squared <- 1 - (1 - r.squared) * ((qn - df.int)/rdf)
+    return(c(R2 = r.squared, adjR2 = adj.r.squared))
+  }
+  
+  
+# convert R2 to r (eq 13 in Nakagawa and Cuthill 2007)
+  #If the R2 is a negative value it means that the model does not explain any of the variation.
+  R2.to.r <- function(estimate, R2, N, k){ #input R2 from the model, k number of predictors in the model, n= sample size
+    if (any(estimate >= 0)){
+      r2 <- 1 - ( ((N-1) * (1-R2)) / (N-k-1) ) 
+      r <- ifelse(r2 < 0, 0, (sqrt(r2)))
+      return(r)
+    } else {  # Make sure to carry the sign of the estimate
+      r2 <- 1 - ( ((N-1) * (1-abs(R2))) / (N-k-1) )
+      r <- ifelse(r2 < 0, 0, (-1 * (sqrt(r2))))
+      return(r)
+    }
+  }
+  
+  
+# Measures of effect size
+  # For univariate analysis (eq 11 in Nakagawa and Cuthill 2007)
+  t.to.r <-function(tval,df){
+    r <- tval / (sqrt((tval^2) + df))
+    return(r)
+  }
+
+```
+
+#Effect size table
+```{r}
+m <- df_nested3 %>% 
+  select(year, plot, gtype, n_birds, mantel.r3) %>% 
+  mutate(intercept = map(mantel.r3, function(x)(x$coefficients[1])), 
+         tval = map(mantel.r3, function(x)(x$test.statistic[1])), 
+         estimate = map(mantel.r3, function(x)(x$coefficients[2])), #retrieve $r
+         tval = map(mantel.r3, function(x)(x$test.statistic[2])), 
+         R2 = map(mantel.r3, function(x)(adj.rsq(x)[[1]])),
+         adj_R2 = map(mantel.r3, function(x)(adj.rsq(x)[[2]])),
+         df = map(mantel.r3, function(x)(x$df.residual))) %>% 
+  unnest(cols=c(n_birds, intercept, tval, estimate, tval, R2, adj_R2, df)) %>%
+  dplyr::select(-mantel.r3) %>% 
+  mutate(se = estimate/tval) %>% 
+  mutate(R2.r = R2.to.r(estimate, R2, N=n_birds, k=3), 
+         t.r = t.to.r(tval, df)) %>%  #effect size
+  mutate(label = paste(year, plot, gtype, sep="."), 
+         yearplot = paste(year, plot)) %>% 
+  filter(!is.na(t.r)) %>% 
+  mutate(gtype = ordered(gtype, levels = c("daytime", "sleeping", "breeding")), 
+         plot = ordered(plot, levels = c("MSTO", "SPRA", "LLOD"))) %>% 
+  arrange(gtype, year, plot) %>% 
+  setDT()
+
+#time
+m.D <- m %>% filter(gtype=="daytime")
+m.N <- m %>% filter(gtype=="sleeping")
+m.B <- m %>% filter(gtype=="breeding")
+```
+
+
+
+#Meta-analysis
+```{r}
+# Meta-analysis (need $t.r, $se)
+model <-  rma.mv(yi=t.r, V=se, data=m,  method="REML", mods = ~ 1, random = list(~1|gtype, ~1|year, ~1|plot))
+
+summary(model) # summary of the model
+
+#sepearate gtype
+model.D <-  rma.mv(yi=t.r, V=se, data=m.D,  method="REML", mods = ~ 1, random = list(~1|year, ~1|plot))
+
+summary(model.D) # summary of the model
+
+#
+model.N <-  rma.mv(yi=t.r, V=se, data=m.N,  method="REML", mods = ~ 1, random = list(~1|year, ~1|plot))
+
+summary(model.N) # summary of the model
+
+#
+model.B <-  rma.mv(yi=t.r, V=se, data=m.B,  method="REML", mods = ~ 1, random = list(~1|year, ~1|plot))
+
+summary(model.B) # summary of the model
+```
+
+#forest plot
+```{r}
+#ALL----
+png(file = "../output/r and association_metanalysis/fig/Fig_r and aso_metanalysis_model3_SS_all.png") 
+
+a <- forest.rma(model,
+                header = c("Year Site", "Effect size [95% CI]"),
+                cex=0.8,
+                at=c(-1, -0.5, 0, 0.5, 1),  
+                slab=paste(m$year, m$plot, m$gtype, sep=", "), 
+                ylim = c(-2, 43),
+                #rows=c(41:29, 27:15, 13:1), #this separates rows
+                #order=order(m$t.r),
+                col = "red")
+
+dev.off()
+
+#Daytime ----
+png(file = "../output/r and association_metanalysis/fig/Fig_Daytime_r and aso_metanalysis_model3_SS_all.png") 
+
+a <- forest.rma(model.D,
+                order = order(m.D$t.r),
+                header = c("Year Site", "Effect size [95% CI]"),
+                cex=0.8,
+                xlim = c(-1,1.5),
+                at=c(-0.5, 0, 0.5, 0.8),
+                slab=paste(m.D$year, m.D$plot, sep=","),
+                col = "red"
+                      )
+text(c(.1),  16.5, c("Daytime"), font=2)
+
+
+dev.off()
+
+#sleeping ----
+png(file = "../output/r and association_metanalysis/fig/Fig_Nighttime_r and aso_metanalysis_model3_SS_all.png", width = 480, height = 480) 
+
+a <- forest(model.N,
+            order = order(m.N$t.r),
+            header = c("Year Site", "Effect size [95% CI]"),
+            cex=0.8,
+            xlim = c(-1,1.5),
+            at=c(-0.5, 0, 0.5, 0.8),
+            slab=paste(m.N$year, m.N$plot, sep="."),
+            col = "red")
+text(c(.1),  16.5, c("Nighttime"), font=2)
+
+dev.off()
+
+#breeding ----
+png(file = "../output/r and association_metanalysis/fig/Fig_breeding_r and aso_metanalysis_model3.png") 
+
+a <- forest.rma(model.B,
+                order = order(m.B$t.r),
+                header = c("Year Site", "Effect size [95% CI]"),
+                cex=0.8,
+                xlim = c(-1,1.5),
+                at=c(-0.5, 0, 0.5, 0.8),
+                slab=paste(m.B$year, m.B$plot),
+                col = "red")
+text(c(.1),  16.5, c("Breeding"), font=2)
+dev.off()
+```
+#************END of MODEL************#
+
+
+
+
+
+
+#*************************************************************#
+#-----MODEL: AI~r + pair----
+```{r}
+#create function
+f_mantel.r2 <- function(AI.m, r.m, pair.m){
+  asnipe::mrqap.dsp(AI.m ~ r.m + pair.m,  intercept = T, directed = "undirected",
+diagonal = F, test.statistic = "t-value", tol = 1e-07, randomisations = 1000)
+}
+
+#Run MRQAP (took a long time)
+df_nested2 <- df_nested %>% 
+  mutate(mantel.r2 = pmap(list(AI.m, r.m, pair.m), f_mantel.r2)) #run parallel map on list-columns
+
+#saveRDS(df_nested2, "../output/r and association/data/output_mantel_r2.rdata")
+```
+
+#SKIP above and read the data set directly
+#read output
+```{r}
+df_nested2 <- readRDS("../output/r and association/data/output_mantel_r2.rdata") %>% setDT()
+
+#add model results (estimates, pvalue)----
+df_nested2 <- df_nested2 %>% 
+  mutate(n_birds = map(AI.m, function(x)(dim(x)[[1]]))) %>% 
+  mutate(coef.r2 = map(mantel.r2, function(x)(x$"coefficients"[2]))) %>% 
+  mutate(pvalue.r2 = map(mantel.r2, function(x)(x$"P.values"[["r.m"]]))) %>% 
+  mutate(coef.pair.r2 = map(mantel.r2, function(x)(x$"coefficients"[3]))) %>% 
+  mutate(pvalue.pair.r2 = map(mantel.r2, function(x)(x$"P.values"[["pair.m"]]))) 
+
+
+#unnest data
+output.r2 <- df_nested2 %>% 
+  select(year, plot, gtype, n_birds, coef.r2, pvalue.r2, coef.pair.r2, pvalue.pair.r2) %>% 
+  unnest(cols= c(n_birds, coef.r2, pvalue.r2, coef.pair.r2, pvalue.pair.r2))
+
+#saveRDS(df_nested2, paste0("../output/r and association/data/df_nested_AI and r2_SS_all.rdata"))
+#write_xlsx(output.r2, paste0("../output/r and association/data/output_QAP_AI and r2_SS_all.xlsx"))
+```
+
+#Meta-analysis: model 2 (AI~r+pair)
+#Effect size table
+```{r}
+#not sure why 2015M, sleeping is NA???
+m2 <- df_nested2 %>% 
+  select(year, plot, gtype, n_birds, mantel.r2) %>% 
+  mutate(intercept = map(mantel.r2, function(x)(x$coefficients[1])), 
+         tval = map(mantel.r2, function(x)(x$test.statistic[1])), 
+         estimate = map(mantel.r2, function(x)(x$coefficients[2])), #retrieve $r
+         tval = map(mantel.r2, function(x)(x$test.statistic[2])), 
+         R2 = map(mantel.r2, function(x)(adj.rsq(x)[[1]])),
+         adj_R2 = map(mantel.r2, function(x)(adj.rsq(x)[[2]])),
+         df = map(mantel.r2, function(x)(x$df.residual))) %>% 
+  unnest(cols=c(n_birds, intercept, tval, estimate, tval, R2, adj_R2, df)) %>%
+  dplyr::select(-mantel.r2) %>% 
+  mutate(se = estimate/tval) %>% 
+  mutate(R2.r = R2.to.r(estimate, R2, N=n_birds, k=3), 
+         t.r = t.to.r(tval, df)) %>%  #effect size
+  mutate(label = paste(year, plot, gtype, sep="."), 
+         yearplot = paste(year, plot)) %>% 
+  filter(!is.na(t.r)) %>% 
+  mutate(gtype = ordered(gtype, levels = c("daytime", "sleeping", "breeding")), 
+         plot = ordered(plot, levels = c("MSTO", "SPRA", "LLOD"))) %>% 
+  arrange(gtype, year, plot) %>% 
+  setDT()
+
+#time
+m2.D <- m2 %>% filter(gtype=="daytime")
+m2.N <- m2 %>% filter(gtype=="sleeping")
+m2.B <- m2 %>% filter(gtype=="breeding")
+```
+
+
+```{r}
+# Meta-analysis (need $t.r, $se)
+model2 <-  rma.mv(yi=t.r, V=se, data=m2,  method="REML", mods = ~ 1, random = list(~1|gtype, ~1|year, ~1|plot))
+
+summary(model2) # summary of the model
+
+#sepearate gtype
+model2.D <-  rma.mv(yi=t.r, V=se, data=m2.D,  method="REML", mods = ~ 1, random = list(~1|year, ~1|plot))
+
+summary(model2.D) # summary of the model
+
+#
+model2.N <-  rma.mv(yi=t.r, V=se, data=m2.N,  method="REML", mods = ~ 1, random = list(~1|year, ~1|plot))
+
+summary(model2.N) # summary of the model
+
+#
+model2.B <-  rma.mv(yi=t.r, V=se, data=m2.B,  method="REML", mods = ~ 1, random = list(~1|year, ~1|plot))
+
+summary(model2.B) # summary of the model
+```
+
+#forest plot: MODEL2(AI~r + pair)
+```{r}
+#ALL----
+png(file = "../output/r and association_metanalysis/fig/Fig_r and aso_metanalysis_model2_SS_all.png") 
+
+forest.rma(model2,
+                      header = c("Year Site", "Effect size [95% CI]"),
+                     cex=0.8,
+                      at=c(-1, -0.5, 0, 0.5, 1),
+                      slab=paste(m$year, m$plot, m$gtype, sep=", "), 
+                      col = "red")
+
+dev.off()
+
+#Daytime ----
+png(file = "../output/r and association_metanalysis/fig/Fig_Daytime_r and aso_metanalysis_model2_SS_all.png") 
+
+forest.rma(model2.D,
+                      header = c("Year Site", "Effect size [95% CI]"),
+                      cex=0.8,
+                      at=c(-1, -0.5, 0, 0.5, 1),
+                      slab=paste(m.D$year, m.D$plot, sep=","),
+                      col = "red", 
+                      )
+
+dev.off()
+
+#sleeping ----
+png(file = "../output/r and association_metanalysis/fig/Fig_Nighttime_r and aso_metanalysis_model2_SS_all.png") 
+
+a <- forest(model2.N,
+            header = c("Year Site", "Effect size [95% CI]"),
+            order=order(m.N$t.r),
+                     cex=0.8,
+                     at=c(-1, -0.5, 0, 0.5, 1),
+                     slab=paste(m.N$year, m.N$plot, sep="."),
+                     col = "red")
+
+dev.off()
+
+#breeding ----
+png(file = "../output/r and association_metanalysis/fig/Fig_breeding_r and aso_metanalysis_model2.png") 
+
+forest.rma(model2.B,
+                     header = c("Year Site", "Effect size [95% CI]"),
+                     cex=0.8,
+                      at=c(-1, -0.5, 0, 0.5, 1),
+                      slab=paste(m.B$year, m.B$plot),
+                      col = "red")
+
+dev.off()
+```
+
+

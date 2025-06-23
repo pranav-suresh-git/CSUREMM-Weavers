@@ -1,0 +1,643 @@
+---
+title: "Chap1 spatial organization"
+output: html_document
+---
+
+```{r}
+#[nestdist]nest distance for all colonyXyear
+#[tree_hei]tree height and size
+#[sum_sleepnest]inds for all nests by colonyXyear
+#[first_mf][m][f]nest representative
+#[combo_m][combo_f]nest and owner combo with distance and r, repeated
+#[df_m_nested][df_f_nested]
+
+#[unicombo_m]combo only appeared once
+```
+
+
+##import data
+```{r}
+#[nestdist.ls]----
+#nest distance matrix by colony
+nestdist.ls <- readRDS("../data/2013-2017 weaver nest dist_matrix.RData")
+
+#[tree_hei]----
+#tree height
+tree_hei <- read_xlsx("../data/c_2013-2017 weaver colony measurement.xlsx") %>% 
+  mutate(year=as.character(year)) %>% 
+  mutate(height_m = height/100, 
+         size_hei = if_else(height >=300, "L", "S"))  #if cut at 250cm, too few small colonies
+```
+
+#Let'e look at the tree height
+```{r}
+gghistogram(tree_hei, x="height", y="..count..")
+
+```
+
+#You can jump to Line 198 for analysis
+## tidy nest distance data
+```{r}
+#convert nest distance matrix to df
+f <- function(x){
+  output <- x %>% modify_if(upper.tri(., diag = F), ~NA) %>% 
+    melt(., na.rm = T) %>% 
+    mutate_if(., is.integer, as.character)
+  return(output)
+}
+
+nestdist_df.ls <- lapply(nestdist.ls, f)
+
+
+#[nestdist]----
+#nest distance df by yearXcolony
+nestdist <- do.call(rbind, nestdist_df.ls) %>% 
+  rownames_to_column("rowname") %>%
+  mutate(year = substr(rowname, 1, 4), colony = substr(rowname, 5, 10)) %>% 
+  rename(nest1=Var1, nest2=Var2, dist=value) %>% 
+  mutate(dist_m = dist/100) %>%
+  group_by(year, colony) %>% 
+  mutate(dist_z = scale(dist_m)) %>% #by year and colony
+  dplyr::select(-rowname) %>% 
+  mutate(id12 = paste0(nest1, nest2), 
+         id21 = paste0(nest2, nest1)) %>% 
+  as.data.table()
+
+#write_xlsx(nestdist, "../output/spatial_arrange/data/output_nestdist.xlsx")
+
+```
+
+
+## finding households
+```{r}
+#[sum_sleepnest]----
+sum_sleepnest <- sleepnest %>% 
+  left_join(sum_sampledays_bynest, by=c("year","plot", "colony", "nest")) %>%
+  rename(n_testerdays = n) %>% 
+  group_by(year, colony, nest,  n_testerdays) %>% 
+  mutate(n_sampling = length(unique(sleep_date))) %>% #$n_sampling:# of sampling nights for nest, this is ONLY the # of nights birds were present, not the real sampling nights
+  group_by(year, colony, nest, color, n_testerdays, n_sampling) %>% 
+  summarise(n_nights = n()) %>% #$n_nights: # of nights in the nest
+  mutate(per_nights = round(n_nights/n_sampling, 2)) %>% 
+  mutate(sex = fun_sex(color, sex)) %>% 
+  group_by(year, colony, nest, sex) %>% 
+  arrange(-n_nights, .by_group=T) %>% 
+  mutate(order_sex = row_number()) %>% 
+  mutate(plot = substr(colony, 1, 4)) %>% 
+  dplyr::select(year, plot, colony, everything ()) %>% 
+  setDT()
+
+#[first_mf]----
+#each ind has only ONE nest
+first_mf <- sum_sleepnest %>% #n=495
+  filter(n_nights>=3 & order_sex == 1) %>% 
+  group_by(year, colony, color) %>% #$color
+  arrange(-n_nights,.by_group=T) %>% 
+  slice(1) %>% #chose ONLY the dominant nest birds maintained
+  select(year, plot, colony, nest, color, sex) %>% 
+  pivot_wider(., names_from = "sex", values_from = "color") %>% 
+  as.data.table() %>% 
+  setDT()
+
+write_xlsx(first_mf, "../output/spatial_arrange/data/output_first_mf.xlsx")
+
+#[m][f]----
+m <- first_mf %>% select(-f) %>% filter(!is.na(m)) %>% 
+  add_count(year, colony) %>%
+  filter(n>=3) %>% select(-n) #colony size>=3males
+f <- first_mf %>% select(-m) %>% filter(!is.na(f)) %>% 
+  add_count(year, colony) %>%
+  filter(n>=3) %>% select(-n) #colony size>=3females
+```
+
+#make combinations of nest and m1, add $r and $dist
+```{r}
+#this is repeated combo
+#[combo_m]----
+combo_m <- m %>% 
+  group_by(year, plot, colony) %>% 
+  group_modify(., ~ expand.grid(.$nest, .$nest, KEEP.OUT.ATTRS = F, stringsAsFactors = F)) %>%    #create combination of nests, n=4867
+  rename("nest1" = "Var1", "nest2" = "Var2") %>% 
+  left_join(m, by=c("year","plot","colony","nest1"="nest")) %>% 
+  left_join(m, by=c("year","plot","colony","nest2"="nest"), suffix=c("1", "2")) %>%
+  as.data.table() %>% 
+  mutate(dist_m = fun_weight(.[,.(nest1, nest2)], nestdist, "dist_m"), 
+         dist_z = fun_weight(.[,.(nest1, nest2)], nestdist, "dist_z"), 
+         r = fun_weight(.[,.(m1, m2)],relate, "r"), 
+         kinship = fun_kinship(.[,.(m1, m2)], kinship, "kinorder")) %>% 
+  mutate(kinship = ordered(kinship, levels = c("first", "second", "UR"))) %>%
+  mutate(r = replace_na(r, 1)) %>% 
+  left_join(mygroup_ssa[gtype=="daytime",.(year, plot, id, groupid)], by=c("year", "plot", "m1"="id")) %>% 
+  left_join(mygroup_ssa[gtype=="daytime",.(year, plot, id, groupid)], by=c("year", "plot", "m2"="id"), suffix-c("_1","_2")) %>% 
+  mutate(samegroup = as.factor(ifelse(groupid.x == groupid.y, 1, 0))) %>% 
+  mutate(samegroup = ordered(samegroup, levels=c("1","0"))) %>% 
+  setDT()
+
+#[combo_f]----
+combo_f <- f %>% 
+  group_by(year, plot, colony) %>% 
+  group_modify(., ~ expand.grid(.$nest, .$nest, KEEP.OUT.ATTRS = F, stringsAsFactors = F)) %>%    #create combination of nests, n=4867
+  rename("nest1" = "Var1", "nest2" = "Var2") %>% 
+  left_join(f, by=c("year","plot","colony","nest1"="nest")) %>% 
+  left_join(f, by=c("year","plot","colony","nest2"="nest"), suffix=c("1","2")) %>% 
+  as.data.table() %>% 
+  mutate(dist_m = fun_weight(.[,.(nest1, nest2)],nestdist, "dist_m"), 
+         dist_z = fun_weight(.[,.(nest1, nest2)], nestdist, "dist_z"), 
+         r = fun_weight(.[,.(f1, f2)],relate, "r"),
+         kinship = fun_kinship(.[,.(f1, f2)], kinship, "kinorder")) %>% 
+  mutate(kinship = ordered(kinship, levels = c("first", "second", "UR"))) %>%
+  mutate(r = replace_na(r, 1)) %>% 
+  left_join(mygroup_ssa[gtype=="daytime",.(year, plot, id, groupid)], by=c("year", "plot", "f1"="id")) %>% 
+  left_join(mygroup_ssa[gtype=="daytime",.(year, plot, id, groupid)], by=c("year", "plot", "f2"="id"), suffix-c("_1","_2")) %>% 
+  mutate(samegroup = as.factor(ifelse(groupid.x == groupid.y, 1, 0))) %>%
+  mutate(samegroup = ordered(samegroup, levels=c("1","0"))) %>% 
+  setDT()
+  
+```
+
+
+
+
+```{r}
+#convert data to matrix
+fun_dtm <- function(data, id1, id2, var){
+  x <- data %>% 
+    dplyr::select(id1, id2, var) %>% 
+    spread(key = id2, value = var) %>% 
+    column_to_rownames(., var = id1) %>% 
+    as.matrix()
+  return(x)
+}
+```
+
+##Into nested data mode
+```{r}
+#[df_m_nested]----
+df_m_nested <- combo_m %>%
+  group_by(year, plot, colony) %>% 
+  nest() %>% 
+  mutate(dist.m = map(data, fun_dtm, "nest1", "nest2", "dist_m")) %>%
+  mutate(distz.m = map(data, fun_dtm, "nest1", "nest2", "dist_z")) %>%  
+  mutate(r.m = map(data, fun_dtm, "nest1", "nest2", "r")) %>% 
+  mutate(samegroup.m = map(data, fun_dtm, "nest1", "nest2", "samegroup")) %>%
+  setDT()
+  
+
+#[df_f_nested]----
+df_f_nested <- combo_f %>%
+  group_by(year, plot, colony) %>% 
+  nest() %>% 
+  mutate(dist.m = map(data, fun_dtm, "nest1", "nest2", "dist_m")) %>% 
+  mutate(distz.m = map(data, fun_dtm, "nest1", "nest2", "dist_z")) %>%  
+  mutate(r.m = map(data, fun_dtm, "nest1", "nest2", "r")) %>% 
+  mutate(samegroup.m = map(data, fun_dtm, "nest1", "nest2", "samegroup")) %>%
+  setDT()
+
+saveRDS(df_m_nested, "../output/spatial_arrange/data/output_df_m_nested.rdata")
+saveRDS(df_f_nested, "../output/spatial_arrange/data/output_df_f_nested.rdata")
+```
+
+#MRQAP test
+```{r}
+#create function: dist.m~r.m
+f_mantel.r <- function(dist.m, r.m){
+  asnipe::mrqap.dsp(dist.m ~ r.m,  intercept = T, directed = "undirected",
+diagonal = F, test.statistic = "t-value", tol = 1e-07, randomisations = 1000)
+}
+
+# #dist~r+samegroup [zeros in samegroup.m and doesn't work]
+# f_mantel.r2 <- function(dist.m, r.m, samegroup.m){
+#   asnipe::mrqap.dsp(dist.m ~ r.m + samegroup.m,  intercept = T, directed = "undirected",
+# diagonal = F, test.statistic = "t-value", tol = 1e-07, randomisations = 1000)
+# }
+
+
+#Run MRQAP
+df_m_nested <- df_m_nested %>% 
+  mutate(mantel.r = pmap(list(dist.m, r.m), f_mantel.r)) 
+
+# df_f_nested <- df_f_nested %>% 
+#   mutate(mantel.r = pmap(list(dist.m, r.m), f_mantel.r))  
+
+#saveRDS(df_m_nested, "../output/spatial_arrange/data/output_mantel_dist and r_male.rdata")
+#saveRDS(df_f_nested, "../output/spatial_arrange/data/output_mantel_dist and r_female.rdata")
+```
+
+
+
+#SKIP above and read the data set directly
+#read output
+```{r}
+# df_m_nested <- readRDS("../output/spatial_arrange/data/output_mantel_dist and r_male.rdata") %>% setDT()
+# df_f_nested <- readRDS("../output/spatial_arrange/data/output_mantel_dist and r_female.rdata") %>% setDT()
+
+#add model results (estimates, pvalue)----
+df_m_nested <- df_m_nested %>% 
+  mutate(n_nests = map(dist.m, function(x)(dim(x)[[1]]))) %>% 
+  mutate(coef.r = map(mantel.r, function(x)(x$"coefficients"[2]))) %>% 
+  mutate(pvalue.r = map(mantel.r, function(x)(x$"P.values"[["r.m"]]))) 
+
+df_f_nested <- df_f_nested %>% 
+  mutate(n_nests = map(dist.m, function(x)(dim(x)[[1]]))) %>% 
+  mutate(coef.r = map(mantel.r, function(x)(x$"coefficients"[2]))) %>% 
+  mutate(pvalue.r = map(mantel.r, function(x)(x$"P.values"[["r.m"]]))) 
+
+#unnest data
+output_m.r <- df_m_nested %>% 
+  select(year, plot, colony, n_nests, coef.r, pvalue.r) %>% 
+  unnest(cols= c(n_nests, coef.r, pvalue.r))
+
+# output_f.r <- df_f_nested %>% 
+#   select(year, plot, colony, n_nests, coef.r, pvalue.r) %>% 
+#   unnest(cols= c(n_nests, coef.r, pvalue.r))
+
+# write_xlsx(output_m.r, paste0("../output/spatial_arrange/data/output_QAP_dist and r_male.xlsx"))
+# write_xlsx(output_f.r, paste0("../output/spatial_arrange/data/output_QAP_dist and r_female.xlsx"))
+```
+
+#Meta-analysis
+```{r}
+library(metafor) # for metanalysis. 
+library(igraph)
+library(asnipe) # for lm on matrices
+library(lme4)
+library(car)
+library(ggpubr) # for plotting correlations
+library(Hmisc) # for multiple correlation 
+library(car) # for collinearity
+library(reshape2) # for melting matrices
+library(lattice)
+```
+
+#import data
+```{r}
+df_m_nested <- readRDS("../output/spatial_arrange/data/output_mantel_dist and r_male.rdata") %>% setDT()
+df_f_nested <- readRDS("../output/spatial_arrange/data/output_mantel_dist and r_female.rdata") %>% setDT()
+```
+
+##FUNCTION TO Get EFFECT SIZE
+```{r}
+# code for extracting r-squared and adjusted r-squared for the netlm 
+# (adopted from Adriana)
+adj.rsq <- function(x){
+    
+    mss <- sum((fitted(x) - mean(fitted(x)))^2)
+    
+    qn <- x$n
+    df.int <- 1
+    rdf <- qn - x$rank
+    rss <- sum(resid(x)^2)
+    #resvar <- rss/rdf
+    
+    r.squared <- mss/(mss + rss)
+    adj.r.squared <- 1 - (1 - r.squared) * ((qn - df.int)/rdf)
+    return(c(R2 = r.squared, adjR2 = adj.r.squared))
+  }
+  
+  
+# convert R2 to r (eq 13 in Nakagawa and Cuthill 2007)
+  #If the R2 is a negative value it means that the model does not explain any of the variation.
+  R2.to.r <- function(estimate, R2, N, k){ #input R2 from the model, k number of predictors in the model, n= sample size
+    if (any(estimate >= 0)){
+      r2 <- 1 - ( ((N-1) * (1-R2)) / (N-k-1) ) 
+      r <- ifelse(r2 < 0, 0, (sqrt(r2)))
+      return(r)
+    } else {  # Make sure to carry the sign of the estimate
+      r2 <- 1 - ( ((N-1) * (1-abs(R2))) / (N-k-1) )
+      r <- ifelse(r2 < 0, 0, (-1 * (sqrt(r2))))
+      return(r)
+    }
+  }
+  
+  
+# Measures of effect size
+  # For univariate analysis (eq 11 in Nakagawa and Cuthill 2007)
+  t.to.r <-function(tval,df){
+    r <- tval / (sqrt((tval^2) + df))
+    return(r)
+  }
+
+```
+
+#Effect size table
+```{r}
+m.m <- df_m_nested %>% 
+  mutate(n_nests = map(dist.m, function(x)dim(x)[1])) %>% 
+  select(year, plot, colony, n_nests, mantel.r) %>% 
+  mutate(intercept = map(mantel.r, function(x)(x$coefficients[1])), 
+         tval = map(mantel.r, function(x)(x$test.statistic[1])), 
+         estimate = map(mantel.r, function(x)(x$coefficients[2])), #retrieve $r
+         tval = map(mantel.r, function(x)(x$test.statistic[2])), 
+         R2 = map(mantel.r, function(x)(adj.rsq(x)[[1]])),
+         adj_R2 = map(mantel.r, function(x)(adj.rsq(x)[[2]])),
+         df = map(mantel.r, function(x)(x$df.residual))) %>% 
+  dplyr::select(-mantel.r) %>% 
+  unnest(cols=c(n_nests, intercept, tval, estimate, tval, R2, adj_R2, df)) %>%
+  mutate(se = estimate/tval) %>% 
+  mutate(R2.r = R2.to.r(estimate, R2, N=n_nests, k=1)) %>% #"NAaNs" produced/it means r2<0 and R2.r is assigned as 0. It's fine. 
+  mutate(t.r = t.to.r(tval, df)) %>%  #effect size
+  left_join(select(tree_hei, year, colony, size_hei), by = c("year", "colony")) %>% 
+  setDT()
+
+```
+
+
+
+#Meta-analysis
+```{r}
+# this one has lower AIC
+model <-  rma.mv(yi=t.r, V=se, data=m.m,  method="REML", mods = ~ 1, random = list(~1|year, ~1|plot))
+
+summary(model) # summary of the model
+AIC(model) #108.57
+
+#no effect on tree size
+model2 <-  rma.mv(yi=t.r, V=se, data=m.m,  method="REML", mods = ~ size_hei, random = list(~1|year, ~1|plot))
+
+summary(model2) # summary of the model
+AIC(model2) #109.04
+
+#
+model3 <-  rma.mv(yi=t.r, V=se, data=m.m,  method="REML", mods = ~ 1, random = ~year|plot)
+
+summary(model3) # summary of the model
+AIC(model2) #109.04
+
+# no random effect
+model0 <-  rma(yi=t.r, sei=se, data=m.m,  method="REML", mods = ~ 1)
+
+summary(model0)
+AIC(model0) #112
+```
+
+#forest plot
+```{r}
+#ALL----
+png(file = "../output/spatial_arrange/fig/Fig_r and dist_metanalysis_model_nz.png")
+tiff(file = "../output/spatial_arrange/fig/Fig_r and dist_metanalysis_model_nz.tiff")
+
+a <- forest.rma(model,
+                header = c("Year Colony", "Effect size [95% CI]"),
+                showweights = F,
+                cex=0.6,
+                at=c(-8, 0, 8),  
+                slab=paste(m.m$year, m.m$colony), 
+                xlim=c(-12,12),
+                #ylim = c(-2, 43),
+                order=order(m.m$t.r),
+                col = "red")
+
+#mtext(paste("Heterogeneity: ", expression(I^2), " = ", round(stab.model$I2, 2),sep=""), at = -0.35, line = -29.5, cex = 0.8)
+
+
+dev.off()
+```
+
+#ggplot approach (make your forest plot pretty. Later)
+```{r}
+p=ggplot(dat, aes(y=year, x=yi, xmin=lowerci, xmax=upperci, shape = tester))+
+  #Add data points and color them black
+  geom_point(color = 'black')+
+  #Add 'special' points for the summary estimates, by making them diamond shaped
+  geom_point(data=subset(dat, tester=='Summary'), color='black', shape=18, size=4)+
+  #add the CI error bars
+  geom_errorbarh(height=.1)+
+  #Specify the limits of the x-axis and relabel it to something more meaningful
+  scale_x_continuous(limits=c(-2,2), name='Standardized Mean Difference (d)')+
+  #Give y-axis a meaningful label
+  ylab('Reference')+
+  #Add a vertical dashed line indicating an effect size of zero, for reference
+  geom_vline(xintercept=0, color='black', linetype='dashed')+
+  #Create sub-plots (i.e., facets) based on levels of setting
+  #And allow them to have their own unique axes (so authors don't redundantly repeat)
+  facet_grid(setting~., scales= 'free', space='free')+
+  #Apply my APA theme
+  apatheme
+p
+```
+
+
+#calculate I^2
+```{r}
+#this part looks strange, very low I^2
+W <- diag(1/m.m$se)
+X <- model.matrix(model)
+P <- W - W %*% X %*% solve(t(X) %*% W %*% X) %*% t(X) %*% W
+100 * sum(model$sigma2) / (sum(model$sigma2) + (model$k-model$p)/sum(diag(P)))
+```
+#********END of META-ANALYSIS************#
+
+
+
+#*************Order of relatives**********#
+#TIDY DATA
+```{r}
+#[unicombo_m]----
+unicombo_m <- m %>% 
+  group_by(year, plot, colony) %>% 
+  group_modify(., ~ as.data.frame.matrix(t(combn(.$nest, 2)), stringsAsFactors = F)) %>%
+  rename("nest1" = "V1", "nest2" = "V2") %>% 
+  left_join(m, by=c("year","plot","colony","nest1"="nest")) %>% 
+  left_join(m, by=c("year","plot","colony","nest2"="nest"), suffix=c("1", "2")) %>%
+  as.data.table() %>% 
+  mutate(dist_m = fun_weight(.[,.(nest1, nest2)], nestdist, "dist_m"), 
+         dist_z = fun_weight(.[,.(nest1, nest2)], nestdist, "dist_z"), 
+         r = fun_weight(.[,.(m1, m2)],relate, "r"), 
+         kinship = fun_kinship(.[,.(m1, m2)], kinship, "kinorder"), 
+         #kinship2 = fun_kinship(.[,.(m1, m2)], kinship, "kinorder2"), 
+         sex12="MM") %>% 
+  #mutate(kinship = ordered(kinship, levels = c("first", "second", "DR", "UR"))) %>%
+  mutate(r = replace_na(r, 1)) %>% 
+  left_join(mygroup_ssa[gtype=="daytime",.(year, plot, id, groupid)], by=c("year", "plot", "m1"="id")) %>% 
+  left_join(mygroup_ssa[gtype=="daytime",.(year, plot, id, groupid)], by=c("year", "plot", "m2"="id"), suffix-c("_1","_2")) %>% 
+  mutate(samegroup = as.factor(ifelse(groupid.x == groupid.y, 1, 0))) %>% 
+  mutate(samegroup = ordered(samegroup, levels=c("1","0"))) %>% 
+  setDT()
+
+unicombo_f <- f %>% 
+  group_by(year, plot, colony) %>% 
+  group_modify(., ~ as.data.frame.matrix(t(combn(.$nest, 2)), stringsAsFactors = F)) %>%
+  rename("nest1" = "V1", "nest2" = "V2") %>% 
+  left_join(f, by=c("year","plot","colony","nest1"="nest")) %>% 
+  left_join(f, by=c("year","plot","colony","nest2"="nest"), suffix=c("1", "2")) %>%
+  as.data.table() %>% 
+  mutate(dist_m = fun_weight(.[,.(nest1, nest2)], nestdist, "dist_m"), 
+         dist_z = fun_weight(.[,.(nest1, nest2)], nestdist, "dist_z"), 
+         r = fun_weight(.[,.(f1, f2)],relate, "r"), 
+         kinship = fun_kinship(.[,.(f1, f2)], kinship, "kinorder"), 
+         #kinship2 = fun_kinship(.[,.(f1, f2)], kinship, "kinorder2"), 
+         sex12="FF") %>% 
+  #mutate(kinship = ordered(kinship, levels = c("first", "second", "DR", "UR"))) %>%
+  mutate(r = replace_na(r, 1)) %>% 
+  left_join(mygroup_ssa[gtype=="daytime",.(year, plot, id, groupid)], by=c("year", "plot", "f1"="id")) %>% 
+  left_join(mygroup_ssa[gtype=="daytime",.(year, plot, id, groupid)], by=c("year", "plot", "f2"="id"), suffix-c("_1","_2")) %>% 
+  mutate(samegroup = as.factor(ifelse(groupid.x == groupid.y, 1, 0))) %>% 
+  mutate(samegroup = ordered(samegroup, levels=c("1","0"))) %>% 
+  setDT()
+
+#all
+unicombo_mf <- rbind(unicombo_m, unicombo_f, use.names=F) %>% rename(id1=m1,id2=m2)
+```
+
+#summary stats of nest dist and order of relatives
+```{r}
+sum_m <- unicombo_m %>% 
+  group_by(kinship) %>% 
+  summarise(mean_dist = mean(dist_m), sd = sd(dist_m))
+
+sum_f <- unicombo_f %>% 
+  group_by(kinship) %>% 
+  summarise(mean_dist = mean(dist_m), sd = sd(dist_m))
+```
+
+
+#GGBOXPLOT
+```{r}
+ggboxplot(unicombo_mf, x="kinship", y="dist_m", fill="sex12", palette = "jco", ylab = "Nest distance (m)", xlab="Kinship")
+ggviolin(unicombo_mf, x="kinship", y="dist_m", fill="sex12", palette = "jco", ylab = "Nest distance (m)", xlab="Kinship")
+
+ggscatter(unicombo_mf, x="r", y="dist_m", color="sex12", add = "reg.line")
+```
+
+#Male
+```{r}
+#ggboxplot(unicombo_m, x="kinship", y="dist_m", fill="samegroup", palette = "jco", ylab = "Nest distance (m)", xlab="Kinship", add= "jitter") +
+ggviolin(unicombo_m, x="kinship", y="dist_m", fill="samegroup", palette = "jco", ylab = "Nest distance (m)", xlab="Kinship") +
+  
+theme(#axis.text.x = element_text(size=7),
+        axis.text.y = element_text(face="bold", size=10),
+        axis.title.x = element_text(face="bold", size=14),
+        axis.title.y = element_text(face="bold", size=14)) +
+  scale_x_discrete(labels=c("first" = "First-order", "second" = "Second-order", "UR"="Unrelated"))
+  
+ggsave("../output/spatial_arrange/fig/fig_boxplot_dist and r and samegroup.png")
+
+#
+ggboxplot(unicombo_m, x="kinship", y="dist_m", ylab = "Nest distance (m)", xlab="Kinship", fill = "grey50") + 
+  theme(#axis.text.x = element_text(size=7),
+        axis.text.y = element_text(face="bold", size=10),
+        axis.title.x = element_text(face="bold", size=14),
+        axis.title.y = element_text(face="bold", size=14)) +
+  scale_x_discrete(labels=c("first" = "First-order", "second" = "Second-order", "UR"="Unrelated"))
+  
+ggsave("../output/spatial_arrange/fig/fig_boxplot_dist and r.png")
+
+```
+
+#Female
+```{r}
+ggboxplot(unicombo_f, x="kinship", y="dist_m", fill="samegroup", palette = "jco", ylab = "Nest distance (m)", xlab="Kinship") +
+
+theme(#axis.text.x = element_text(size=7),
+        axis.text.y = element_text(face="bold", size=10),
+        axis.title.x = element_text(face="bold", size=14),
+        axis.title.y = element_text(face="bold", size=14)) +
+  scale_x_discrete(labels=c("first" = "First-order", "second" = "Second-order", "UR"="Unrelated"))
+  
+
+
+#
+ggboxplot(unicombo_f, x="kinship", y="dist_m", ylab = "Nest distance (m)", xlab="Kinship", fill = "grey50") + 
+  theme(#axis.text.x = element_text(size=7),
+        axis.text.y = element_text(face="bold", size=10),
+        axis.title.x = element_text(face="bold", size=14),
+        axis.title.y = element_text(face="bold", size=14)) +
+  scale_x_discrete(labels=c("first" = "First-order", "second" = "Second-order", "UR"="Unrelated"))
+  
+```
+
+#------OWNED nests and social levels------
+#PAIR nest
+```{r}
+#"Paired males normally maintained one nest (1.10 ± 0.25, n = 128) while some pairs (10 %) may owned two nests."
+#[nest_pair]----
+nest_pair <- sum_sleepnest %>% 
+  filter(n_nights>=3 & order_sex == 1) %>% 
+  group_by(year, colony, nest) %>% #$color
+  select(year, plot, colony, nest, color, sex) %>% 
+  pivot_wider(., names_from = "sex", values_from = "color") %>% 
+  as.data.table() %>% 
+  mutate(dyadID = fun_kinship(.[,.(m,f)], dyadID, "dyadID")) %>% 
+  filter(!is.na(dyadID)) %>%  #only pairs
+  setDT()
+
+#summary of how many nests do males have?
+#only 12% male maintained more than one nest within a season
+sum_m_nest <- nest_pair %>% 
+  filter(!is.na(dyadID)) %>% 
+  group_by(m, year, plot, colony) %>% 
+  summarise(n_nest = n()) 
+
+sum_m_nest_colonymean <- sum_m_nest %>% 
+  group_by(m, year, plot) %>%
+  summarise(n_nest = mean(n_nest))
+
+sum_m_nest_yearmean <- sum_m_nest_colonymean %>% 
+  group_by(m) %>%
+  summarise(n_nest = mean(n_nest))
+
+sum2_m_nest_yearmean <- sum_m_nest_yearmean %>% 
+  ungroup() %>% 
+  summarise(mean = mean(n_nest), sd = sd(n_nest), median = median(n_nest))
+
+view(sum_m_nest)
+view(sum_m_nest_colonymean)
+view(sum_m_nest_yearmean)
+view(sum2_m_nest_yearmean)
+```
+
+## number of nests by GROUP/unit type
+```{r}
+#[nest_group]----
+#IMPORTANT FILE----
+nest_group <- sum_sleepnest %>% 
+  filter(n_nights>=3 & order_sex == 1) %>%
+  select(year, plot, colony, nest, color, sex) %>% 
+  left_join(mygroup_ssa[gtype=="daytime", .(year, plot, id, groupid)], by = c("year","plot","color"="id")) %>% 
+  select(year, plot, colony, nest, groupid) %>% 
+  distinct() %>% 
+  left_join(Dgroup_unit, by=c("groupid", "year", "plot")) %>% 
+  filter(!is.na(groupid)) %>%  #n=3 nests, those inds were not belonged to any daytime group
+
+view(nest_group)
+
+#[sum_nest_group]----
+#how many nests does a daytime group has?
+sum_nest_group <- nest_group %>% 
+  group_by(year, plot, colony, groupid, unit) %>% 
+  summarise(n_nest = n()) 
+
+view(sum_nest_group)
+
+#[sum_nest_unit]----
+#sum by famliy type
+sum_nest_unit <- sum_nest_group %>%
+  group_by(year, plot, unit, groupid) %>% 
+  summarise(n_nest = mean(n_nest)) %>% 
+  group_by(unit) %>% 
+  summarise(mean = mean(n_nest), sd = sd(n_nest), median = median(n_nest), min = min(n_nest), max = max(n_nest)) 
+
+   #NA unit is produced by 14MDg11(gs=1) and was not included in unit analysis
+   #group size =1; 14MDg11, 15LDg27, 17LDg30
+view(sum_nest_unit)
+
+#[sum_nest_unit_pro]----
+#sum by famliy type
+sum_nest_unit_pro <- sum_nest_group %>%
+  group_by(unit, n_nest) %>%
+  summarise(n= n()) %>% 
+  group_by(unit) %>% 
+  mutate(pro = n/sum(n)) %>% 
+  arrange(-pro, .by_group=T)
+
+   #NA unit is produced by 14MDg11(gs=1) and was not included in unit analysis
+   #group size =1; 14MDg11, 15LDg27, 17LDg30
+view(sum_nest_unit)
+view(sum_nest_unit_pro)
+
+
+write_xlsx(sum_nest_unit, "../output/spatial_arrange/data/output_sum_nest_unit.xlsx")  
+```
+
+
+

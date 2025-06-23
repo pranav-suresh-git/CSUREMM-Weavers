@@ -1,0 +1,268 @@
+library(dplyr)
+library(readr)
+library(lubridate)
+library(ggplot2)
+library(readxl)
+library(igraph)
+library(scales)
+library(ggraph)
+library(tidygraph)
+library(tidyr)
+library(janitor)
+
+
+# 1. Load the logger data
+logger_data <- read_excel("~/Code/Birds/data/logger/1min/2016_weaver_all_colony_1min_20190515_final.xlsx")
+colony_dist <- read_excel("~/Code/Birds/data/spatial/intercolony_distance.xlsx")  # columns: colony_1, colony_2, dist_m
+nest_metadata <- read_excel("~/Code/Birds/data/Index/2013-2017_weaver_sampling_duration.xlsx") %>%
+  dplyr::select(nest, colony) %>% 
+  distinct()
+
+
+# 1. Clean long-form logger data
+movement_data <- logger_data %>%
+  filter(plot == "MSTO") %>%
+  arrange(Kring, timestamp.1m) %>%
+  group_by(Kring) %>%
+  mutate(
+    from_nest = nest,
+    to_nest = lead(nest),
+    t_start = timestamp.1m,
+    t_end = lead(timestamp.1m)
+  ) %>%
+  filter(!is.na(to_nest))  # remove incomplete transitions
+
+
+##GGplot visualization with spatial
+
+# Pivot to wide distance matrix format
+colony_dist_matrix <- colony_dist %>%
+  pivot_wider(names_from = colony2, values_from = dist_m)
+  
+rownames(colony_dist_matrix) <- colony_dist_matrix$colony1
+colony_dist_matrix$colony1 <- NULL
+
+colony_dist_matrix <- as.matrix(colony_dist_matrix)
+
+
+
+# Run classical MDS (k = 2 dimensions)
+mds_coords <- cmdscale(as.dist(colony_dist_matrix), k = 2) %>%
+  as.data.frame()
+
+mds_coords$colony <- rownames(mds_coords)
+colnames(mds_coords)[1:2] <- c("x_colony", "y_colony")
+
+inter_colony_scale <- 0.07  # Compress between-colony distances
+intra_colony_spread <- 10.0  # Expand within-colony layout
+
+# Merge MDS colony coordinates with each nest
+nest_positions <- nest_metadata %>%
+  mutate(nest = as.character(nest)) %>% 
+  left_join(mds_coords, by = "colony") %>%
+  group_by(colony) %>%
+  mutate(
+    # Optional: spread out nests slightly around their colony center
+    x_colony = x_colony * inter_colony_scale,  # Compress MDS layout
+    y_colony = y_colony * inter_colony_scale,
+    angle = seq(0, 2 * pi, length.out = n() + 1)[-1],
+    x = x_colony + 0.5 * cos(angle),
+    y = y_colony + 0.5 * sin(angle)
+  ) %>%
+  ungroup() %>%
+  dplyr::select(nest, colony, x, y)
+
+
+edge_data <- movement_data %>%
+  count(from_nest, to_nest, name = "weight") %>%
+  rename(from = from_nest, to = to_nest)
+
+g_tbl <- tbl_graph(edges = edge_data, directed = TRUE)
+
+g_tbl <- g_tbl %>%
+  activate(nodes) %>%
+  left_join(nest_positions, by = c("name" = "nest"))
+
+ggraph(g_tbl, layout = "manual", x = x, y = y) +
+  geom_edge_fan(aes(width = weight, color = weight), alpha = 0.6) +
+  scale_edge_width(range = c(0.5, 3)) +
+  scale_edge_color_gradient(low = "lightgray", high = "black") +
+  geom_node_point(aes(color = colony), size = 4) +
+  scale_color_brewer(palette = "Set2", na.value = "gray80") +
+  theme_graph(base_family = "Helvetica") +
+  labs(
+    title = "Nest Movement Graph (Colony-Spatial Layout)",
+    edge_width = "Movement Frequency",
+    edge_color = "Movement Intensity"
+  ) +
+  theme(legend.position = "right")
+
+
+
+
+
+#### GGPLOT Visualization without Spatial
+edge_data <- movement_data %>%
+  count(from_nest, to_nest, name = "weight") %>%
+  rename(from = from_nest, to = to_nest)
+
+g_tbl <- tbl_graph(edges = edge_data, directed = TRUE)
+
+g_tbl <- g_tbl %>%
+  activate(nodes) %>%
+  mutate(
+    nest = name,
+    colony = nest_metadata$colony[match(name, nest_metadata$nest)],
+    colony = factor(colony)
+  )
+
+# 5. ggraph plot
+
+ggraph(g_tbl, layout = "fr") +
+  geom_edge_fan(aes(width = weight, color = weight), show.legend = TRUE, alpha = 0.6) +
+  scale_edge_width(range = c(0.5, 3)) +
+  scale_edge_color_gradient(low = "lightgray", high = "black") +
+  geom_node_point(aes(color = colony), size = 4) +
+  scale_color_brewer(palette = "Set2", na.value = "gray80") +
+  theme_graph(base_family = "Helvetica") +
+  labs(
+    title = "Nest Movement Graph (MSTO)",
+    edge_width = "Movement Frequency",
+    edge_color = "Movement Intensity"
+  ) +
+  theme(
+    legend.position = "right"
+  )
+
+
+
+
+
+## tidy plot
+
+g <- movement_data %>%
+  count(from_nest, to_nest, sort = TRUE) %>%
+  graph_from_data_frame(directed = TRUE)
+
+# 1. Use Fruchterman-Reingold layout for spacing
+layout_fr <- layout_with_fr(g)
+
+# 2. Scale edge width by weight (normalized)
+edge_weights <- E(g)$weight
+scaled_weights <- scales::rescale(edge_weights, to = c(0.5, 5))  # adjust min/max width
+
+# 3. Plot with adjustments
+V(g)$colony <- nest_metadata$colony[match(V(g)$name, nest_metadata$nest)]
+
+# Assign color by colony
+colony_factors <- as.factor(V(g)$colony)
+palette <- rainbow(length(levels(colony_factors)))
+colony_colors <- palette[as.numeric(colony_factors)]
+
+edge_colors <- colorRampPalette(c("lightgray", "black"))(100)
+E(g)$color <- edge_colors[scales::rescale(E(g)$weight, to = c(1, 100)) %>% round()]
+
+plot(
+  g,
+  layout = layout_with_fr(g),
+  vertex.label = NA,
+  vertex.size = 6,
+  vertex.color = colony_colors,
+  edge.width = scales::rescale(E(g)$weight, to = c(0.5, 5)),
+  edge.color = E(g)$color,
+  main = "Nest Movement Graph Colored by Colony"
+)
+legend(
+  "bottomleft",
+  legend = levels(colony_factors),
+  col = palette,
+  pch = 19,
+  pt.cex = 1.5,
+  title = "Colony"
+)
+
+
+
+
+
+##################################################################################
+
+library(dplyr)
+library(readr)
+library(lubridate)
+library(ggplot2)
+library(readxl)
+library(igraph)
+library(scales)
+library(ggraph)
+library(tidygraph)
+library(tidyr)
+library(janitor)
+
+
+# 1. Load the logger data
+logger_data <- read_excel("~/Code/Birds/data/logger/1min/2016_weaver_all_colony_1min_20190515_final.xlsx")
+colony_dist <- read_excel("~/Code/Birds/data/spatial/intercolony_distance.xlsx")  # columns: colony_1, colony_2, dist_m
+nest_metadata <- read_excel("~/Code/Birds/data/Index/2013-2017_weaver_sampling_duration.xlsx") %>%
+  janitor::clean_names() %>%
+  dplyr::select(nest, colony) %>% 
+  distinct()
+
+str(nest_metadata)
+head(nest_metadata)
+
+
+# 1. Clean long-form logger data
+movement_data <- logger_data %>%
+  filter(plot == "MSTO") %>%
+  arrange(Kring, timestamp.1m) %>%
+  group_by(Kring) %>%
+  mutate(
+    from_nest = nest,
+    to_nest = lead(nest),
+    t_start = timestamp.1m,
+    t_end = lead(timestamp.1m)
+  ) %>%
+  filter(!is.na(to_nest))  # remove incomplete transitions
+
+
+##GGplot visualization with spatial
+
+# Pivot to wide distance matrix format
+colony_dist_matrix <- colony_dist %>%
+  pivot_wider(names_from = colony2, values_from = dist_m)
+
+rownames(colony_dist_matrix) <- colony_dist_matrix$colony1
+colony_dist_matrix$colony1 <- NULL
+
+colony_dist_matrix <- as.matrix(colony_dist_matrix)
+
+
+
+# Run classical MDS (k = 2 dimensions)
+mds_coords <- cmdscale(as.dist(colony_dist_matrix), k = 2) %>%
+  as.data.frame()
+
+mds_coords$colony <- rownames(mds_coords)
+colnames(mds_coords)[1:2] <- c("x_colony", "y_colony")
+
+mds_shifted <- mds_coords %>%
+  mutate(
+    x_shifted = x_colony - min(x_colony),
+    y_shifted = y_colony - min(y_colony)
+  )
+
+mds_transformed <- mds_shifted %>%
+  mutate(
+    x_log = log1p(x_shifted),
+    y_log = log1p(y_shifted)
+  )
+
+library(ggplot2)
+
+ggplot(mds_transformed, aes(x = x_log, y = y_log)) +
+  geom_point(size = 4) +
+  geom_text(aes(label = colony), vjust = -1.2, size = 3) +
+  theme_minimal() +
+  coord_fixed() +
+  labs(title = "Colony Layout with Log-Scaled MDS Coordinates")

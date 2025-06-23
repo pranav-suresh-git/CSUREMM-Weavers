@@ -1,0 +1,577 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#reply to
+#2.	Explore temporal patterns in the data (i.e., year to year) before delving into models.  This will involve providing means and variances for association (e.g., pairs, families, extended families, colonies), number and size of groups, and social network metrics and connecting these data to rainfall. 
+
+#import data
+```{r}
+#[degree_KDNB]----
+degree_KDNB <- read_xlsx("../output/kin network/output_degree network_KDNB_all.xlsx") %>% 
+    left_join(rainfall_period_z, by = c("year" = "period_t1")) %>% 
+    left_join(rainfall_period, by = c("year" = "period_t1")) %>% 
+    setDT()
+
+#[site_dyad]----
+#association here is daytime
+site_dyad <- readRDS("../output/r and social levels/data/output_site_dyad_raso.rdata") %>%
+  mutate(R25 = as.factor(ifelse(r > 0.25, 1, 0)), 
+         R125 = as.factor(ifelse(r > 0.125, 1, 0))) %>% 
+  left_join(rainfall_period_z, by = c("year" = "period_t1")) %>% 
+  left_join(rainfall_period, by = c("year" = "period_t1")) %>% 
+  setDT()
+  
+```
+
+#Temporal analysis
+#SUMMARY OF degree of kin on SITE
+```{r}
+#there is difference among sites and adding LLOD messed up the mean/sd for 2013 and 2014 since you only sample LLOD from 2015-2017
+sum_dg_yearplot <- degree_KDNB %>% 
+  group_by(plot, year) %>% 
+  summarise(mean_dg1 = mean(dg_first), sd_dg1 = sd(dg_first),
+            mean_dg12 = mean(dg_firstsecond), sd_dg12 = sd(dg_firstsecond)) 
+
+#degree of kin by year
+sum_dg_year <- degree_KDNB %>% 
+  filter(plot!="LLOD") %>% 
+  group_by(year) %>% 
+  summarise(mean_dg1 = mean(dg_first), sd_dg1 = sd(dg_first),
+            mean_dg2 = mean(dg_second), sd_dg2 = sd(dg_second),
+            mean_dg12 = mean(dg_firstsecond), sd_dg12 = sd(dg_firstsecond))
+
+#degree of kin by year X sex
+sum_dg_yearsex <- degree_KDNB %>% 
+  filter(plot!="LLOD") %>% 
+  group_by(sex, year) %>% 
+  summarise(mean_dg1 = mean(dg_first), sd_dg1 = sd(dg_first),
+            mean_dg2 = mean(dg_second), sd_dg2 = sd(dg_second),
+            mean_dg12 = mean(dg_firstsecond), sd_dg12 = sd(dg_firstsecond))
+  
+```
+
+#PLOT degree and rainfall
+```{r}
+library(ggpubr)
+
+ggscatter(degree_KDNB[plot != "LLOD"], x = "LSrain", y = "dg_first", add = "reg.line", conf.int = T, cor.coef = T) + geom_count()
+ggscatter(degree_KDNB[plot != "LLOD"], x = "shortrain", y = "dg_first", add = "reg.line", conf.int = T, cor.coef = T) + geom_count()
+ggscatter(degree_KDNB[plot != "LLOD"], x = "longrain", y = "dg_first", add = "reg.line", conf.int = T, cor.coef = T) + geom_count() 
+ggscatter(degree_KDNB[plot != "LLOD"], x = "postbreed", y = "dg_first", add = "reg.line", conf.int = T, cor.coef = T) + geom_count() 
+ggscatter(degree_KDNB[plot != "LLOD"], x = "LSPrain", y = "dg_first", add = "reg.line", conf.int = T, cor.coef = T) + geom_count() 
+
+#
+ggerrorplot(degree_KDNB[plot == "SPRA"], x = "longrain", y = "dg_first", desc_stat = "mean_se")
+ggerrorplot(degree_KDNB[plot == "SPRA"], x = "longrain", y = "dg_firstsecond", desc_stat = "mean_se")
+
+ggscatter(degree_KDNB[plot == "SPRA"], x = "longrain", y = "dg_first", add = "reg.line", conf.int = T, cor.coef = F) + geom_count() 
+
+
+
+#Figure SX.--longrain, correlated
+ggscatter(degree_KDNB[plot == "SPRA"], x = "longrain", y = "dg_firstsecond", add = "reg.line", conf.int = T, cor.coef = T) + 
+  geom_count() +
+  labs(x = str_wrap("Long rains in the previous season (mm)", width = 30), y = "Size of kin networks") +
+  theme(axis.title.x = element_text(size=16, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=16, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+ggsave("Fig_number of kin nw and longrain_SPRA3.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+
+#Figure SX.---shortrain, no clear relationship
+ggscatter(degree_KDNB[plot == "SPRA"], x = "shortrain", y = "dg_firstsecond", add = "reg.line", conf.int = T, cor.coef = T) + 
+  geom_count() +
+  labs(x = str_wrap("Short rains (mm)", width = 30), y = "Size of kin networks") +
+  theme(axis.title.x = element_text(size=16, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=16, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+ggsave("Fig_number of kin nw and shortrain_SPRA.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+
+
+#Figure SX.---LSrain
+ggscatter(degree_KDNB[plot == "SPRA"], x = "LSrain", y = "dg_firstsecond", add = "reg.line", conf.int = T, cor.coef = F) + 
+  geom_count() +
+  labs(x = str_wrap("Rainfall (long rains and short rains)(mm)", width = 30), y = "Size of kin networks") +
+  theme(axis.title.x = element_text(size=16, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=16, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+ggsave("Fig_number of kin nw and LSrain_SPRA.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+
+#Figure SX.---LSPrain(long, short, preB)
+ggscatter(degree_KDNB[plot == "SPRA"], x = "LSPrain", y = "dg_firstsecond", add = "reg.line", conf.int = T, cor.coef = F) + 
+  geom_count() +
+  labs(x = str_wrap("Rainfall (Long rain, short rains, pre-breeding)(mm)", width = 30), y = "Size of kin networks") +
+  theme(axis.title.x = element_text(size=16, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=16, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+ggsave("Fig_number of kin nw and LSPrain_SPRA0.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+
+
+#MSTO/LLOD is messing up the pattern prob. missingness
+ggscatter(degree_KDNB[plot == "MSTO"], x = "longrain", y = "dg_first", add = "reg.line", conf.int = T, cor.coef = T) + geom_count() 
+```
+
+
+
+#SUMMARY OF R/ASO on SITE
+```{r}
+#average relatedness by year & plot
+sum_raso_yearplot <- site_dyad %>%
+  group_by(plot, year) %>% 
+  summarise(mean_r = mean(r), sd_r = sd(r),
+            mean_aso = mean(aso), sd_aso = sd(aso))
+
+#by year (LLOD excluded)
+sum_raso_year <- site_dyad %>%
+  filter(plot!= "LLOD") %>% 
+  group_by(year) %>% 
+  summarise(mean_r = mean(r), sd_r = sd(r),
+            mean_aso = mean(aso), sd_aso = sd(aso))
+
+#by year X sex
+sum_raso_yearsex <- site_dyad %>%
+  filter(plot!= "LLOD") %>% 
+  group_by(V12sex, year) %>% 
+  summarise(mean_r = mean(r), sd_r = sd(r),
+            mean_aso = mean(aso), sd_aso = sd(aso))
+
+```
+
+#plot aso vs. rainfall on site by dyads
+```{r}
+ggscatter(site_dyad[plot == "SPRA" & is.na(pair )==T & R25==1], x = "longrain_t1", y = "aso", color = "V12sex", add = "reg.line", conf.int = T, cor.coef = F) + 
+  #geom_count() +
+  labs(x = "Rainfall (mm)", y = "Association") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+```
+
+
+ 
+#SUMMARY OF R/ASO vs. rainfall by unit
+#I don't feel this tells me anything,but I'll just show to address the comments
+#Tidy data
+```{r}
+Dgroup_unit_rain <- Dgroup_unit %>% 
+  mutate(mean_r_z = scale(mean_r)) %>%  
+  mutate(UR125 = as.factor(ifelse(mean_r_z > 0.125, 0, 1))) %>% 
+  left_join(rainfall_period, by = c("year" = "period_t1")) %>% 
+  left_join(rainfall_period_z, by = c("year" = "period_t1")) %>% 
+  as.data.table()
+```
+
+#---------GROUP RELATEDNESS---------------
+#r vs. rainfall
+```{r}
+ggscatter(Dgroup_unit_rain[plot == "SPRA"], x = "longrain", y = "mean_r", add = "reg.line", conf.int = T, cor.coef = F) + 
+  #geom_count() +
+  labs(x = "Rainfall (mm)", y = "Mean relatedness") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+ggsave("Fig_r and longrain_SPRA.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+
+
+#r vs. rainfall BY UNIT
+ggscatter(Dgroup_unit_rain[plot == "SPRA"], x = "longrain", y = "mean_r", add = "reg.line", conf.int = T, cor.coef = F, facet.by = "unit") + 
+  #geom_count() +
+  labs(x = "Rainfall (mm)", y = "Mean association") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+ggsave("Fig_r and longrain_by_unit_SPRA.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+```
+
+#---------GROUP ASSOCIATION---------------
+```{r}
+#***group association is more influenced by gruop size, NO interyear variation****
+
+#aso vs. year by unit
+ggscatter(Dgroup_unit_rain[plot == "SPRA"], x = "year", y = "mean_aso", add = "reg.line", conf.int = T, cor.coef = F, facet.by = "unit") + 
+  #geom_count() +
+  labs(x = "year", y = "Mean association") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+#aso vs. gs (decreased)
+ggscatter(Dgroup_unit_rain[plot == "SPRA"], x = "gs", y = "mean_aso", add = "reg.line", conf.int = T, cor.coef = F, facet.by = "unit") + 
+  #geom_count() +
+  labs(x = "group size", y = "Mean association") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+#aso vs. gs by year
+ggscatter(Dgroup_unit_rain[plot == "SPRA"], x = "gs", y = "mean_aso", add = "reg.line", conf.int = T, cor.coef = F, facet.by = "year") + 
+  #geom_count() +
+  labs(x = "group size", y = "Mean association") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+#aso vs. gs by year
+ggscatter(Dgroup_unit_rain[plot == "SPRA"], x = "gs", y = "mean_aso", add = "reg.line", conf.int = T, cor.coef = F, color = "year") + 
+  #geom_count() +
+  labs(x = "Rainfall (mm)", y = "Mean association") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+#aso vs. rainfall(previous)
+ggscatter(Dgroup_unit_rain[plot == "SPRA"], x = "longrain", y = "mean_aso", add = "reg.line", conf.int = T, cor.coef = F) + 
+  #geom_count() +
+  labs(x = "Rainfall (mm)", y = "Mean association") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+ggsave("Fig_aso and longrain_by_SPRA.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+
+#aso vs. rainfall(long rain_t1)
+ggscatter(Dgroup_unit_rain[plot == "SPRA"], x = "longrain_t1", y = "mean_aso", add = "reg.line", conf.int = T, cor.coef = F) + 
+  #geom_count() +
+  labs(x = "Rainfall (mm)", y = "Mean association") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+ggsave("Fig_aso and longrain_t1_by_SPRA.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+
+#aso vs. rainfall by UR125
+ggscatter(Dgroup_unit_rain[plot == "SPRA"], x = "longrain", y = "mean_aso", color = "UR125", add = "reg.line", conf.int = T, cor.coef = F) + 
+  #geom_count() +
+  labs(x = "long rains (mm)", y = "Mean association") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+ggsave("Fig_group_aso and longrain_byUR125_SPRA.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+
+#aso vs. Lraintype by UR125
+ggscatter(Dgroup_unit_rain[plot == "SPRA" & unit == "EF"], x = "Lraintype", y = "mean_aso", color = "UR125", add = "reg.line", conf.int = T, cor.coef = F) + 
+  #geom_count() +
+  labs(x = "long rains (mm)", y = "Mean association") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+#aso vs. rainfall BY UNIT
+ggscatter(Dgroup_unit_rain[plot == "SPRA"], x = "longrain", y = "mean_aso", add = "reg.line", conf.int = T, cor.coef = F, facet.by = "unit") + 
+  #geom_count() +
+  labs(x = "Rainfall (mm)", y = "Mean association") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+ggsave("Fig_aso and longrain_by_unit_SPRA.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+
+```
+
+```{r}
+#aso vs. year by unit
+ggscatter(Dgroup_unit_rain, x = "longrain_t1_z", y = "mean_aso", add = "reg.line", conf.int = T, cor.coef = T, facet.by = "unit") + 
+  #geom_count() +
+  labs(x = "longrain_t1", y = "Mean association") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+ggsave("Fig_aso and longraint1_by_unit.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+```
+
+
+#----NUMBER of UNITs vs. RAINFALL----
+#Tidy data
+```{r}
+#[sum_Dgroup_unit]----
+sum_Dgroup_unit <- Dgroup_unit_rain %>%
+  count(year, Lraintype, unit) %>% 
+  group_by(year) %>% 
+  mutate(sum = sum(n), per = round(n/sum, digits = 3)) %>% 
+  left_join(rainfall_period, by = c("year" = "period_t1"))
+
+#[sum_Dgroup_unit_plot]----
+sum_Dgroup_unit_plot <- Dgroup_unit_rain %>%
+  count(year, plot, Lraintype, unit) %>% 
+  group_by(year, plot) %>% 
+  mutate(sum = sum(n), per = round(n/sum, digits = 3)) %>% 
+  left_join(rainfall_period, by = c("year" = "period_t1"))
+
+
+#[sum_Dgroup_unit_SPRA]----
+sum_Dgroup_unit_SPRA <- sum_Dgroup_unit_plot %>% filter(plot == "SPRA")
+
+#[sum_Dgroup_SPRA]----
+sum_Dgroup_SPRA <- Dgroup_unit_rain %>%
+  filter(plot == "SPRA") %>% 
+  count(year) %>% 
+  group_by(year) %>% 
+  mutate(sum = sum(n), per = round(n/sum, digits = 3)) %>% 
+  left_join(rainfall_period, by = c("year" = "period_t1"))
+```
+
+
+#----plot GROUP(units) vs. rainfall----
+#percentage
+```{r}
+#Long rain in previous year
+#this one seems interesting! more rain --> MORE extended family the next years
+ggscatter(sum_Dgroup_unit_SPRA, x = "longrain", y = "per", add = "reg.line", conf.int = T, cor.coef = T, facet.by = "unit") + 
+  geom_count() +
+  labs(x = "longrain_t0 (mm)", y = "Percentage of type of units (%)") +
+  theme(axis.title.x = element_text(size=16, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=16, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+ggsave("Fig_per_unit and longrain_SPRA2.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+
+#
+ggscatter(sum_Dgroup_unit_SPRA, x = "longrain_t1", y = "per", add = "reg.line", conf.int = T, cor.coef = T, facet.by = "unit") + 
+  geom_count() +
+  labs(x = "longrain_t1 (mm)", y = "Percentage of type of units (%)") +
+  theme(axis.title.x = element_text(size=16, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=16, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+ggsave("Fig_per_unit and longraint1_SPRA.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+
+
+#Long rain type
+#this seems interesting too.
+ggscatter(sum_Dgroup_unit_SPRA, x = "Lraintype", y = "per", add = "reg.line", conf.int = T, cor.coef = F, facet.by = "unit") + 
+  #geom_count() +
+  labs(x = "Rainfall (mm)", y = "Percentage of type of units (%)") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+ggsave("Fig_per_unit and longrainType_SPRA.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+
+#Long rain type (ALL plots)--
+#this could be biased since there are a lot of missing inds. on MSTO and LLOD
+ggscatter(sum_Dgroup_unit_plot, x = "Lraintype", y = "per", color = "plot", add = "reg.line", conf.int = T, cor.coef = T, facet.by = "unit") + 
+  #geom_count() +
+  labs(x = "Long rain type", y = "Percentage of type of units (%)") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+ggsave("Fig_per_unit and longrainType_allplots.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+
+#-----
+ggscatter(sum_Dgroup_unit_plot, x = "longrain", y = "per", add = "reg.line", conf.int = T, cor.coef = T, facet.by = "unit") + 
+  geom_count() +
+  labs(x = "longrain_t0 (mm)", y = "Percentage of type of units (%)") +
+  theme(axis.title.x = element_text(size=16, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=16, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+ggsave("Fig_per_unit and longrain_allplot.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+
+#-----
+ggerrorplot(sum_Dgroup_unit_plot, x = "Lraintype", y = "per", facet.by = "unit") + 
+  #geom_count() +
+  labs(x = "Long rain type", y = "Percentage of type of units (%)") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+  
+```
+
+#SIZE of groups vs. RAINFALL
+```{r}
+#plot (Long rain for the season)
+#this one seems interesting! more rain --> MORE family the next years
+ggscatter(Dgroup_unit_rain[plot == "SPRA" & unit!="pair"], x = "longrain_t1", y = "gs", add = "reg.line", conf.int = T, cor.coef = T) + 
+  geom_count() +
+  labs(x = "Rainfall (mm)", y = "Group size") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+#rainfall in previous season
+ggscatter(Dgroup_unit_rain[plot == "SPRA" & unit != "pair"], x = "longrain", y = "gs", add = "reg.line", conf.int = T, cor.coef = T) + 
+  geom_count() +
+  labs(x = "Rainfall in previous long rains(mm)", y = "Group size") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+#all plots. longrain_t1
+ggscatter(Dgroup_unit_rain, x = "longrain_t1", y = "gs", add = "reg.line", conf.int = T, cor.coef = T) + 
+  geom_count() +
+  labs(x = "longrain_t1 (mm)", y = "Group size") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        )
+
+ggsave("Fig_Dgroup size_longrain_t1.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+
+#
+ggscatter(Dgroup_unit_rain, x = "longrain", y = "gs", add = "reg.line", conf.int = T, cor.coef = T) + 
+  geom_count() +
+  labs(x = "longrain_t0 (mm)", y = "Group size") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        )
+
+ggsave("Fig_Dgroup size_longrain_t0.png", dev = "png", path ="../output/Chap2 temporal dynamics raso/fig/", width=5, height=4.5)
+```
+
+#SIZE of groups (by units) vs. RAINFALL
+```{r}
+#plot $longrain
+ggscatter(Dgroup_unit_rain[plot == "SPRA"], x = "longrain", y = "gs", add = "reg.line", conf.int = T, cor.coef = T, facet.by = "unit") + 
+  geom_count() +
+  labs(x = "Rainfall (mm)", y = "Group size") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+#plot $longrain_t1
+ggscatter(Dgroup_unit_rain[plot == "SPRA"], x = "longrain_t1", y = "gs", add = "reg.line", conf.int = T, cor.coef = T, facet.by = "unit") + 
+  geom_count() +
+  labs(x = "Rainfall (mm)", y = "Group size") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+#plot $longrain_t1/only family
+ggscatter(Dgroup_unit_rain[plot == "SPRA" & unit %in% c("NF", "EF")], x = "longrain_t1", y = "gs", add = "reg.line", conf.int = T, cor.coef = T, facet.by = "unit") + 
+  geom_count() +
+  labs(x = "Long rain (mm)", y = "Group size") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+#plot $longrain/only family
+ggscatter(Dgroup_unit_rain[plot == "SPRA" & unit %in% c("NF", "EF")], x = "longrain", y = "gs", add = "reg.line", conf.int = T, cor.coef = T, facet.by = "unit") + 
+  geom_count() +
+  labs(x = "Previous long rain (mm)", y = "Group size") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+#plot $longrain/no pair
+ggscatter(Dgroup_unit_rain[plot == "SPRA" & unit != "pair"], x = "Lraintype", y = "gs", add = "reg.line", conf.int = T, cor.coef = T) + 
+  geom_count() +
+  labs(x = "rain (mm)", y = "Group size") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+#plot $LSrain
+ggscatter(Dgroup_unit_rain[plot == "SPRA"], x = "LSrain", y = "gs", add = "reg.line", conf.int = T, cor.coef = T, facet.by = "unit") + 
+  geom_count() +
+  labs(x = "Rainfall (mm)", y = "Group size") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+
+#plot $Lraintype
+ggscatter(Dgroup_unit_rain[plot == "SPRA"], x = "Lraintype", y = "gs", add = "reg.line", conf.int = T, cor.coef = F, facet.by = "unit") + 
+  geom_count() +
+  labs(x = "Rainfall (mm)", y = "Group size") +
+  theme(axis.title.x = element_text(size=18, face="bold"),
+        axis.text.x = element_text(size=14),
+        axis.title.y = element_text(size=18, face="bold"),
+        axis.text.y = element_text(size=14)
+        ) 
+```
+
+#ASO vs. kinship by year
+```{r}
+aso_ssa_rain <- aso_ssa %>% 
+  filter(gtype == "daytime") %>% 
+  left_join(rainfall_period, by = c("year" = "period_t1"))
+
+ggerrorplot(aso_ssa_rain, x = "longrain_t1", y = "association", facet.by = "kinorder2")
+ggerrorplot(aso_ssa_rain, x = "longrain", y = "association", facet.by = "kinorder2")
+
+#SPRA
+ggerrorplot(aso_ssa_rain[plot=="SPRA"], x = "longrain_t1", y = "association", facet.by = "kinorder2")
+ggerrorplot(aso_ssa_rain[plot=="SPRA"], x = "longrain", y = "association", facet.by = "kinorder2")
+
+ggerrorplot(aso_ssa_rain[plot=="SPRA"], x = "longrain_t1", y = "association", facet.by = "UR")
+
+
+```
+
