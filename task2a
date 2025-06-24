@@ -1,0 +1,13 @@
+To investigate whether cooperation evolves more in kin-dense dyads, we simulated a two-player game using empirical relatedness values from observed weaver bird dyads. We modeled a classic Prisoner’s Dilemma with payoffs:
+  - Reward for mutual cooperation (R = 3),
+  - Temptation to defect (T = 5),
+  - Sucker's payoff (S = 0),
+  - Punishment for mutual defection (P = 1).
+We incorporated inclusive fitness by adjusting each player’s payoff with a relatedness coefficient r drawn from the Wang estimator. Each individual’s payoff was calculated as:
+Inclusive Payoff = Own Payoff + r × Partner’s Payoff
+We specifically compared:
+Payoff_C∣C = 3 + 3r (cooperator against cooperator),
+Payoff_D∣C = 5 + 0r = 5 (defector against cooperator).
+Cooperation is favored when: 3 + 3r > 5 ⇒ r > 2/3 ≈ 0.67
+Using 7,000+ actual bird dyads with known relatedness and social association, we found that as relatedness increased, the proportion of dyads in which cooperation was favored also rose. Among dyads with r ≥ 0.25, over 80% met the condition for cooperation being evolutionarily stable. Conversely, among unrelated or negatively related dyads (r ≤ 0), cooperation was rarely favored.
+These results support the hypothesis that cooperation evolves more readily in kin-dense dyads, consistent with Hamilton’s rule and kin selection theory.
