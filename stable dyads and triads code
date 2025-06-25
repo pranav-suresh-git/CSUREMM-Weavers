@@ -1,0 +1,92 @@
+import pandas as pd
+import networkx as nx
+from collections import defaultdict
+from itertools import combinations
+
+# Load the association data
+association_df = pd.read_csv("output_2013-2017-weaver-r-and-association_SS_all_yearplot.csv")
+
+# Keep only positive associations
+filtered_df = association_df[association_df["association"] > 0]
+
+# Step 1: Build yearly networks and detect communities
+yearly_communities = {}
+for year in sorted(filtered_df["year"].unique()):
+    year_df = filtered_df[filtered_df["year"] == year]
+    G = nx.Graph()
+    edges = list(zip(year_df["id1"], year_df["id2"], year_df["association"]))
+    G.add_weighted_edges_from(edges)
+
+    # Community detection: greedy modularity
+    from networkx.algorithms.community import greedy_modularity_communities
+    communities = list(greedy_modularity_communities(G))
+
+    # Map individual to community ID
+    community_map = {}
+    for i, group in enumerate(communities):
+        for individual in group:
+            community_map[individual] = i
+    yearly_communities[year] = community_map
+
+# Step 2: Find dyads that co-occurred in the same community
+observed_dyads = defaultdict(lambda: {"shared_years": 0, "stable_years": 0})
+
+for year, communities in yearly_communities.items():
+    # Reverse the map: community_id -> list of members
+    grouped = defaultdict(list)
+    for individual, group in communities.items():
+        grouped[group].append(individual)
+
+    for members in grouped.values():
+        for id1, id2 in combinations(sorted(members), 2):
+            observed_dyads[(id1, id2)]["shared_years"] += 1
+            observed_dyads[(id1, id2)]["stable_years"] += 1
+
+# Convert to DataFrame
+dyad_rows = []
+for (id1, id2), counts in observed_dyads.items():
+    dyad_rows.append({
+        "id1": id1,
+        "id2": id2,
+        "shared_years": counts["shared_years"],
+        "stable_years": counts["stable_years"],
+        "fraction_stable": counts["stable_years"] / counts["shared_years"]
+    })
+
+stable_dyads_df = pd.DataFrame(dyad_rows)
+
+# Step 3: Find triads that co-occurred in the same community
+observed_triads = defaultdict(lambda: {"shared_years": 0, "stable_years": 0})
+
+for year, communities in yearly_communities.items():
+    grouped = defaultdict(list)
+    for individual, group in communities.items():
+        grouped[group].append(individual)
+
+    for members in grouped.values():
+        if len(members) >= 3:
+            for id1, id2, id3 in combinations(sorted(members), 3):
+                observed_triads[(id1, id2, id3)]["shared_years"] += 1
+                observed_triads[(id1, id2, id3)]["stable_years"] += 1
+
+# Convert to DataFrame
+triad_rows = []
+for (id1, id2, id3), counts in observed_triads.items():
+    triad_rows.append({
+        "id1": id1,
+        "id2": id2,
+        "id3": id3,
+        "shared_years": counts["shared_years"],
+        "stable_years": counts["stable_years"],
+        "fraction_stable": counts["stable_years"] / counts["shared_years"]
+    })
+
+stable_triads_df = pd.DataFrame(triad_rows)
+
+# Save to CSV
+stable_dyads_df.to_csv("stable_dyads.csv", index=False)
+stable_triads_df.to_csv("stable_triads.csv", index=False)
+
+# Or preview first few rows
+print(stable_dyads_df.head())
+print(stable_triads_df.head())
